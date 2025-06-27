@@ -4,4 +4,5 @@ lib/openzeppelin-contracts=lib/yieldnest-flex-strategy/lib/yieldnest-vault/lib/o
 lib/openzeppelin-contracts-upgradeable=lib/yieldnest-flex-strategy/lib/yieldnest-vault/lib/openzeppelin-contracts-upgradeable
 openzeppelin-contracts-upgradeable/=lib/yieldnest-flex-strategy/lib/yieldnest-vault/lib/openzeppelin-contracts-upgradeable
 openzeppelin-contracts/=lib/yieldnest-flex-strategy/lib/yieldnest-vault/lib/openzeppelin-contracts
+lib/yieldnest-vault/=lib/yieldnest-flex-strategy/lib/yieldnest-vault
 script=lib/yieldnest-flex-strategy/script
