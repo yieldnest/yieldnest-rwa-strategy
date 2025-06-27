@@ -2,11 +2,10 @@
 pragma solidity ^0.8.28;
 
 import "lib/yieldnest-flex-strategy/script/DeployFlexStrategy.s.sol";
-import { L1Contracts } from "@yieldnest-vault-script/Contracts.sol";
-import { IContracts } from "@yieldnest-vault-script/Contracts.sol";
-import { IActors } from "@yieldnest-vault-script/Actors.sol";
-import { console } from "forge-std/console.sol";
-
+import {L1Contracts} from "@yieldnest-vault-script/Contracts.sol";
+import {IContracts} from "@yieldnest-vault-script/Contracts.sol";
+import {IActors} from "@yieldnest-vault-script/Actors.sol";
+import {console} from "forge-std/console.sol";
 
 contract MainnetRWAStrategyActors is IActors {
     address public constant YnSecurityCouncil = 0xfcad670592a3b24869C0b51a6c6FDED4F95D6975;
@@ -38,7 +37,7 @@ contract MainnetRWAStrategyActors is IActors {
 }
 
 contract DeployRWAStrategy is DeployFlexStrategy {
-// Additional functionality for DeployRWAStrategy can be added here
+    // Additional functionality for DeployRWAStrategy can be added here
 
     address public constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
     address public constant ynRWAx = 0x01Ba69727E2860b37bc1a2bd56999c1aFb4C15D8;
@@ -52,21 +51,21 @@ contract DeployRWAStrategy is DeployFlexStrategy {
                 accountTokenSymbol: "ynFLEX-RWA-USDC-PrivateCredit",
                 decimals: 6,
                 paused: true,
-                targetApy: 0.12 ether,
-                lowerBound: 0.5 ether,
-                minRewardableAssets: 1000e6,
+                targetApy: 0.12 ether, // 12% per year
+                lowerBound: 0.5 ether, // max slash of 50% at a given time
+                minRewardableAssets: 1000e6, // 1000 USDC
                 accountingProcessor: accountingProcessor,
                 baseAsset: USDC,
                 allocator: ynRWAx,
-                safe: safe,
+                safe: safe, // TODO: deploy a new one
                 alwaysComputeTotalAssets: true
             })
         );
-        
+
         super.run();
+
+        // TODO: deploy RewardsSweeper
     }
-
-
 
     function _setup() public override {
         if (block.chainid == 1) {
@@ -76,5 +75,4 @@ contract DeployRWAStrategy is DeployFlexStrategy {
             contracts = IContracts(new L1Contracts());
         }
     }
-
 }
