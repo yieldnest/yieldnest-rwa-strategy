@@ -2,18 +2,51 @@
 pragma solidity ^0.8.28;
 
 import "lib/yieldnest-flex-strategy/script/DeployFlexStrategy.s.sol";
+import { L1Contracts } from "@yieldnest-vault-script/Contracts.sol";
+import { IContracts } from "@yieldnest-vault-script/Contracts.sol";
+import { IActors } from "@yieldnest-vault-script/Actors.sol";
+
+
+contract MainnetRWAStrategyActors is IActors {
+    address public constant YnSecurityCouncil = 0xfcad670592a3b24869C0b51a6c6FDED4F95D6975;
+    address public constant YnProcessor = 0x56866A6D5655C9E534320DA95fbBB82Fb3bF3D7D;
+    address public constant YnDev = 0xa08F39d30dc865CC11a49b6e5cBd27630D6141C3;
+    address public constant YnBootstrapper = 0x832e0D8e7A7Bdfe181f30df614383FAA4B5C2924;
+
+    address public constant TIMELOCK = address(0);
+
+    address public constant ADMIN = YnSecurityCouncil;
+    address public constant PROCESSOR = YnProcessor;
+    address public constant EXECUTOR_1 = YnSecurityCouncil;
+    address public constant PROPOSER_1 = YnSecurityCouncil;
+
+    address public constant PROVIDER_MANAGER = YnSecurityCouncil;
+    address public constant BUFFER_MANAGER = YnSecurityCouncil;
+    address public constant ASSET_MANAGER = YnSecurityCouncil;
+    address public constant PROCESSOR_MANAGER = YnSecurityCouncil;
+    address public constant PAUSER = YnDev;
+    address public constant UNPAUSER = YnSecurityCouncil;
+    address public constant FEE_MANAGER = YnSecurityCouncil;
+
+    address public constant ALLOCATOR_MANAGER = YnSecurityCouncil;
+
+    address public constant UPDATER = YnDev;
+    // FIXME; set different bootstrapper for mainnet
+    address public constant BOOTSTRAPPER = YnBootstrapper;
+    address public constant UNAUTHORIZED = address(0);
+}
 
 contract DeployRWAStrategy is DeployFlexStrategy {
 // Additional functionality for DeployRWAStrategy can be added here
 
 
-    // function _setup() public override {
-    //     if (block.chainid == 1) {
-    //         minDelay = 1 days;
-    //         MainnetActors _actors = new MainnetActors();
-    //         actors = IActors(_actors);
-    //         contracts = IContracts(new L1Contracts());
-    //     }
-    // }
+    function _setup() public override {
+        if (block.chainid == 1) {
+            minDelay = 1 days;
+            MainnetRWAStrategyActors _actors = new MainnetRWAStrategyActors();
+            actors = IActors(_actors);
+            contracts = IContracts(new L1Contracts());
+        }
+    }
 
 }
