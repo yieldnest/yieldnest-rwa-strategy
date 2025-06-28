@@ -6,6 +6,9 @@ import {L1Contracts} from "@yieldnest-vault-script/Contracts.sol";
 import {IContracts} from "@yieldnest-vault-script/Contracts.sol";
 import {IActors} from "@yieldnest-vault-script/Actors.sol";
 import {console} from "forge-std/console.sol";
+import {RewardsSweeper} from "lib/yieldnest-flex-strategy/src/utils/RewardsSweeper.sol";
+import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ProxyUtils} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/script/ProxyUtils.sol";
 
 contract MainnetRWAStrategyActors is IActors {
     address public constant YnSecurityCouncil = 0xfcad670592a3b24869C0b51a6c6FDED4F95D6975;
@@ -34,6 +37,8 @@ contract MainnetRWAStrategyActors is IActors {
     // FIXME; set different bootstrapper for mainnet
     address public constant BOOTSTRAPPER = YnBootstrapper;
     address public constant UNAUTHORIZED = address(0);
+
+    address public constant REWARDS_SWEEPER_ADMIN = YnDev; // TODO: set to prod value
 }
 
 contract DeployRWAStrategy is DeployFlexStrategy {
@@ -41,6 +46,11 @@ contract DeployRWAStrategy is DeployFlexStrategy {
 
     address public constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
     address public constant ynRWAx = 0x01Ba69727E2860b37bc1a2bd56999c1aFb4C15D8;
+
+    address public constant rwaSAFE = 0x7e92AbC00F58Eb325C7fC95Ed52ACdf74584Be2c;
+
+    RewardsSweeper rewardsSweeperImplementation;
+    RewardsSweeper rewardsSweeper;
 
     function run() public override {
         setDeploymentParameters(
@@ -57,14 +67,65 @@ contract DeployRWAStrategy is DeployFlexStrategy {
                 accountingProcessor: accountingProcessor,
                 baseAsset: USDC,
                 allocator: ynRWAx,
-                safe: safe, // TODO: deploy a new one
+                safe: rwaSAFE,
                 alwaysComputeTotalAssets: true
             })
         );
 
         super.run();
+    }
 
-        // TODO: deploy RewardsSweeper
+    function configureStrategy() internal virtual override {
+        // Assumes the deployment has already happened
+
+        // Deploy the RewardsSweeper contract as a TransparentUpgradeableProxy and initialize it
+
+        // Assuming RewardsSweeper is a contract that needs to be deployed
+        rewardsSweeperImplementation = new RewardsSweeper();
+
+        rewardsSweeper = RewardsSweeper(
+            payable(
+                address(
+                    new TransparentUpgradeableProxy(
+                        address(rewardsSweeperImplementation),
+                        address(timelock),
+                        abi.encodeWithSelector(RewardsSweeper.initialize.selector, deployer, address(accountingModule))
+                    )
+                )
+            )
+        );
+
+        rewardsSweeper.grantRole(rewardsSweeper.DEFAULT_ADMIN_ROLE(), actors.ADMIN());
+
+        rewardsSweeper.grantRole(
+            rewardsSweeper.REWARDS_SWEEPER_ROLE(), MainnetRWAStrategyActors(address(actors)).REWARDS_SWEEPER_ADMIN()
+        );
+
+        accountingModule.grantRole(accountingModule.REWARDS_PROCESSOR_ROLE(), address(rewardsSweeper));
+
+        // Log the deployment
+        console.log("RewardsSweeper deployed at:", address(rewardsSweeper));
+
+        // renounce roles
+        rewardsSweeper.renounceRole(rewardsSweeper.REWARDS_SWEEPER_ROLE(), deployer);
+        rewardsSweeper.renounceRole(rewardsSweeper.DEFAULT_ADMIN_ROLE(), deployer);
+
+        // deploy and configure sweeper
+        super.configureStrategy();
+    }
+
+    function _saveDeployment(Env env) internal virtual override {
+        vm.serializeAddress(symbol(), string.concat(symbol(), "-rewardsSweeper-proxy"), address(rewardsSweeper));
+        vm.serializeAddress(
+            symbol(),
+            string.concat(symbol(), "-rewardsSweeper-proxyAdmin"),
+            ProxyUtils.getProxyAdmin(address(rewardsSweeper))
+        );
+        vm.serializeAddress(
+            symbol(), string.concat(symbol(), "-rewardsSweeper-implementation"), address(rewardsSweeperImplementation)
+        );
+
+        super._saveDeployment(env);
     }
 
     function _setup() public override {
