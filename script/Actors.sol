@@ -27,7 +27,6 @@ contract MainnetRWAStrategyActors is IActors {
     address public constant ALLOCATOR_MANAGER = YnSecurityCouncil;
 
     address public constant UPDATER = YnDev;
-    // FIXME; set different bootstrapper for mainnet
     address public constant BOOTSTRAPPER = YnBootstrapper;
     address public constant UNAUTHORIZED = address(0);
 
