@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 pragma solidity ^0.8.28;
 
-import { Test } from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {DeployRWAStrategy} from "@script/DeployRWAStrategy.s.sol";
 import {FlexStrategy} from "lib/yieldnest-flex-strategy/src/FlexStrategy.sol";
 import {IAccountingModule} from "lib/yieldnest-flex-strategy/src/AccountingModule.sol";

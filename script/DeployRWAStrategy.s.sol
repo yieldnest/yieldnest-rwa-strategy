@@ -34,7 +34,7 @@ contract DeployRWAStrategy is DeployFlexStrategy {
                 targetApy: 0.12 ether, // 12% per year
                 lowerBound: 0.5 ether, // max slash of 50% at a given time
                 minRewardableAssets: 1000e6, // 1000 USDC
-                accountingProcessor: accountingProcessor,
+                accountingProcessor: rwaSAFE,
                 baseAsset: USDC,
                 allocator: ynRWAx,
                 safe: rwaSAFE,
