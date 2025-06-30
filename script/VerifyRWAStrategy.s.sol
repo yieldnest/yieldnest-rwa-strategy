@@ -119,7 +119,7 @@ contract VerifyRWAStrategy is BaseScript, Test {
             "bootstrapper has allocator role"
         );
 
-        assertGe(timelock.getMinDelay(), minDelay, "min delay is invalid");
+        assertEq(timelock.getMinDelay(), 1 days, "min delay is invalid");
         assertEq(Ownable(strategyProxyAdmin).owner(), address(timelock), "proxy admin owner is invalid");
     }
 }
