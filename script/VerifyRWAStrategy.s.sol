@@ -7,15 +7,23 @@ import {Ownable} from "openzeppelin-contracts/contracts/access/Ownable.sol";
 import {RolesVerification} from "lib/yieldnest-flex-strategy/script/verification/RolesVerification.sol";
 import {BaseScript} from "lib/yieldnest-flex-strategy/script/BaseScript.sol";
 import {MainnetRWAStrategyActors} from "@script/Actors.sol";
+import {console} from "forge-std/console.sol";
+import {ProxyUtils} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/script/ProxyUtils.sol";
+import {RewardsSweeper} from "lib/yieldnest-flex-strategy/src/utils/RewardsSweeper.sol";
 
 // forge script VerifyFlexStrategy --rpc-url <MAINNET_RPC_URL>
 contract VerifyRWAStrategy is BaseScript, Test {
+    RewardsSweeper public rewardsSweeper;
+    RewardsSweeper public rewardsSweeperImplementation;
+    address public rewardsSweeperProxyAdmin;
+
     function symbol() public pure override returns (string memory) {
         return "ynRWA-USDC-PrivateCredit";
     }
 
     function run() public {
         _loadDeployment(deploymentEnv);
+        _loadRewardsSweeperDeployment(deploymentEnv);
         _setup();
 
         verify();
@@ -55,6 +63,8 @@ contract VerifyRWAStrategy is BaseScript, Test {
 
     function verify() internal view virtual {
         _verifyDeploymentParams();
+
+        _verifyProxyParameters();
 
         assertNotEq(address(strategy), address(0), "strategy is not set");
         assertNotEq(address(strategyImplementation), address(0), "strategy implementation is not set");
@@ -121,5 +131,84 @@ contract VerifyRWAStrategy is BaseScript, Test {
 
         assertEq(timelock.getMinDelay(), 1 days, "min delay is invalid");
         assertEq(Ownable(strategyProxyAdmin).owner(), address(timelock), "proxy admin owner is invalid");
+    }
+
+    function _loadRewardsSweeperDeployment(Env env) internal virtual {
+        if (!vm.isFile(_deploymentFilePath(env))) {
+            return;
+        }
+
+        string memory jsonInput = vm.readFile(_deploymentFilePath(env));
+        rewardsSweeperImplementation = RewardsSweeper(
+            payable(
+                address(vm.parseJsonAddress(jsonInput, string.concat(".", symbol(), "-rewardsSweeper-implementation")))
+            )
+        );
+        rewardsSweeper = RewardsSweeper(
+            payable(address(vm.parseJsonAddress(jsonInput, string.concat(".", symbol(), "-rewardsSweeper-proxy"))))
+        );
+        rewardsSweeperProxyAdmin =
+            address(vm.parseJsonAddress(jsonInput, string.concat(".", symbol(), "-rewardsSweeper-proxyAdmin")));
+    }
+
+    function _verifyProxyParameters() internal view virtual {
+        {
+            // Verify proxy admin and implementation addresses
+            console.log("==============================================");
+            console.log("=        VERIFYING PROXY CONFIGURATION      =");
+            console.log("==============================================");
+
+            // Verify strategy proxy configuration
+            address strategyImpl = ProxyUtils.getImplementation(address(strategy));
+            address strategyAdmin = ProxyUtils.getProxyAdmin(address(strategy));
+            assertEq(strategyImpl, address(strategyImplementation), "Strategy implementation address mismatch");
+            assertEq(strategyAdmin, strategyProxyAdmin, "Strategy proxy admin address mismatch");
+            console.log("\u2705 Strategy implementation:  ", strategyImpl);
+            console.log("\u2705 Strategy proxy admin:     ", strategyAdmin);
+        }
+
+        {
+            // Verify accounting module proxy configuration
+            address accountingModuleImpl = ProxyUtils.getImplementation(address(accountingModule));
+            address accountingModuleAdmin = ProxyUtils.getProxyAdmin(address(accountingModule));
+            assertEq(
+                accountingModuleImpl,
+                address(accountingModuleImplementation),
+                "Accounting Module implementation address mismatch"
+            );
+            assertEq(
+                accountingModuleAdmin, accountingModuleProxyAdmin, "Accounting Module proxy admin address mismatch"
+            );
+            console.log("\u2705 Accounting Module implementation: ", accountingModuleImpl);
+            console.log("\u2705 Accounting Module proxy admin:    ", accountingModuleAdmin);
+        }
+
+        {
+            // Verify accounting token proxy configuration
+            address accountingTokenImpl = ProxyUtils.getImplementation(address(accountingToken));
+            address accountingTokenAdmin = ProxyUtils.getProxyAdmin(address(accountingToken));
+            assertEq(
+                accountingTokenImpl,
+                address(accountingTokenImplementation),
+                "Accounting Token implementation address mismatch"
+            );
+            assertEq(accountingTokenAdmin, accountingTokenProxyAdmin, "Accounting Token proxy admin address mismatch");
+            console.log("\u2705 Accounting Token implementation: ", accountingTokenImpl);
+            console.log("\u2705 Accounting Token proxy admin:    ", accountingTokenAdmin);
+        }
+
+        {
+            // Verify rewards sweeper proxy configuration
+            address rewardsSweeperImpl = ProxyUtils.getImplementation(address(rewardsSweeper));
+            address rewardsSweeperAdmin = ProxyUtils.getProxyAdmin(address(rewardsSweeper));
+            assertEq(
+                rewardsSweeperImpl,
+                address(rewardsSweeperImplementation),
+                "Rewards Sweeper implementation address mismatch"
+            );
+            assertEq(rewardsSweeperAdmin, rewardsSweeperProxyAdmin, "Rewards Sweeper proxy admin address mismatch");
+            console.log("\u2705 Rewards Sweeper implementation: ", rewardsSweeperImpl);
+            console.log("\u2705 Rewards Sweeper proxy admin:    ", rewardsSweeperAdmin);
+        }
     }
 }
