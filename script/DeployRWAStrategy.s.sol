@@ -19,8 +19,8 @@ contract DeployRWAStrategy is DeployFlexStrategy {
 
     address public constant rwaSAFE = 0x7e92AbC00F58Eb325C7fC95Ed52ACdf74584Be2c;
 
-    RewardsSweeper rewardsSweeperImplementation;
-    RewardsSweeper rewardsSweeper;
+    RewardsSweeper public rewardsSweeperImplementation;
+    RewardsSweeper public rewardsSweeper;
 
     function run() public override {
         setDeploymentParameters(
