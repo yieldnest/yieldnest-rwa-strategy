@@ -42,5 +42,5 @@ jobs:
 
       - name: Run Forge tests
         run: |
-          forge test --rpc-url $RPC_URL -vvv
+          forge test --rpc-url $RPC_URL --fork-url $RPC_URL -vvv
         id: test
