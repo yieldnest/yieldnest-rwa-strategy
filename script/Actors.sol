@@ -30,5 +30,5 @@ contract MainnetRWAStrategyActors is IActors {
     address public constant BOOTSTRAPPER = YnBootstrapper;
     address public constant UNAUTHORIZED = address(0);
 
-    address public constant REWARDS_SWEEPER_ADMIN = YnDev; // TODO: set to prod value
+    address public constant REWARDS_SWEEPER_ADMIN = 0x5Bf7a88e755EABa97BE36EFfB34B32793e140Fa3;
 }
