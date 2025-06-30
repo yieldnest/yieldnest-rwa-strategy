@@ -1,11 +1,13 @@
 pragma solidity ^0.8.28;
 
 import "forge-std/Test.sol";
+import {BaseIntegrationTest} from "./BaseIntegrationTest.sol";
 
-contract BasicFunctionalityTest is Test {
+contract BasicFunctionalityTest is BaseIntegrationTest {
     //DeployRWAStrategy strategy;
 
-    function setUp() public {
+    function setUp() public override {
+        super.setUp();
         // strategy = new DeployRWAStrategy();
     }
 
