@@ -37,7 +37,8 @@ contract BasicFunctionalityTest is BaseIntegrationTest {
 
         assertEq(
             address(ProxyUtils.getImplementation(address(deployment.rewardsSweeper()))),
-            address(newRewardsSweeperImplementation)
+            address(newRewardsSweeperImplementation),
+            "Rewards Sweeper implementation address mismatch after upgrade"
         );
     }
 

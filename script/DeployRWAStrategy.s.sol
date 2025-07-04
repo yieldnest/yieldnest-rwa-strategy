@@ -10,6 +10,7 @@ import {RewardsSweeper} from "lib/yieldnest-flex-strategy/src/utils/RewardsSweep
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyUtils} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/script/ProxyUtils.sol";
 import {MainnetRWAStrategyActors} from "@script/Actors.sol";
+import {RWAFlexStrategyDeployer} from "@script/RWAFlexStrategyDeployer.sol";
 
 contract DeployRWAStrategy is DeployFlexStrategy {
     // Additional functionality for DeployRWAStrategy can be added here
@@ -21,6 +22,31 @@ contract DeployRWAStrategy is DeployFlexStrategy {
 
     RewardsSweeper public rewardsSweeperImplementation;
     RewardsSweeper public rewardsSweeper;
+
+    function createDeployer() internal virtual override returns (FlexStrategyDeployer) {
+        return FlexStrategyDeployer(
+            new RWAFlexStrategyDeployer(
+                FlexStrategyDeployer.DeploymentParams({
+                    name: name,
+                    symbol: symbol_,
+                    accountTokenName: accountTokenName,
+                    accountTokenSymbol: accountTokenSymbol,
+                    decimals: decimals,
+                    allocator: allocator,
+                    baseAsset: baseAsset,
+                    targetApy: targetApy,
+                    lowerBound: lowerBound,
+                    safe: safe,
+                    accountingProcessor: accountingProcessor,
+                    minRewardableAssets: minRewardableAssets,
+                    alwaysComputeTotalAssets: alwaysComputeTotalAssets,
+                    paused: paused,
+                    actors: actors,
+                    minDelay: minDelay
+                })
+            )
+        );
+    }
 
     function run() public override {
         setDeploymentParameters(
@@ -45,43 +71,21 @@ contract DeployRWAStrategy is DeployFlexStrategy {
         super.run();
     }
 
-    function configureStrategy() internal virtual override {
-        // Assumes the deployment has already happened
+    function readDeployedContracts(FlexStrategyDeployer strategyDeployer) internal virtual override {
+        super.readDeployedContracts(strategyDeployer);
 
-        // Deploy the RewardsSweeper contract as a TransparentUpgradeableProxy and initialize it
-
-        // Assuming RewardsSweeper is a contract that needs to be deployed
-        rewardsSweeperImplementation = new RewardsSweeper();
-
-        rewardsSweeper = RewardsSweeper(
+        rewardsSweeper =
+            RewardsSweeper(payable(address(RWAFlexStrategyDeployer(address(strategyDeployer)).rewardsSweeper())));
+        rewardsSweeperImplementation = RewardsSweeper(
             payable(
-                address(
-                    new TransparentUpgradeableProxy(
-                        address(rewardsSweeperImplementation),
-                        address(timelock),
-                        abi.encodeWithSelector(RewardsSweeper.initialize.selector, deployer, address(accountingModule))
-                    )
+                ProxyUtils.getImplementation(
+                    address(RWAFlexStrategyDeployer(address(strategyDeployer)).rewardsSweeper())
                 )
             )
         );
 
-        rewardsSweeper.grantRole(rewardsSweeper.DEFAULT_ADMIN_ROLE(), actors.ADMIN());
-
-        rewardsSweeper.grantRole(
-            rewardsSweeper.REWARDS_SWEEPER_ROLE(), MainnetRWAStrategyActors(address(actors)).REWARDS_SWEEPER_ADMIN()
-        );
-
-        accountingModule.grantRole(accountingModule.REWARDS_PROCESSOR_ROLE(), address(rewardsSweeper));
-
-        // Log the deployment
-        console.log("RewardsSweeper deployed at:", address(rewardsSweeper));
-
-        // renounce roles
-        rewardsSweeper.renounceRole(rewardsSweeper.REWARDS_SWEEPER_ROLE(), deployer);
-        rewardsSweeper.renounceRole(rewardsSweeper.DEFAULT_ADMIN_ROLE(), deployer);
-
-        // deploy and configure sweeper
-        super.configureStrategy();
+        console.log("Rewards Sweeper Proxy Address:", address(rewardsSweeper));
+        console.log("Rewards Sweeper Implementation Address:", address(rewardsSweeperImplementation));
     }
 
     function _saveDeployment(Env env) internal virtual override {
