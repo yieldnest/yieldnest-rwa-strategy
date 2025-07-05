@@ -61,8 +61,8 @@ contract DeployRWAStrategy is DeployFlexStrategy {
                 accountTokenSymbol: "ynFLEX-RWA-USDC-PrivateCredit",
                 decimals: 6,
                 paused: true,
-                targetApy: 0.12 ether, // 12% per year
-                lowerBound: 0.5 ether, // max slash of 50% at a given time
+                targetApy: 0.11 ether, // 11% per year
+                lowerBound: 0.001 ether, // max slash of 0.1% at a given time
                 minRewardableAssets: 1000e6, // 1000 USDC
                 accountingProcessor: rwaSAFE,
                 baseAsset: USDC,

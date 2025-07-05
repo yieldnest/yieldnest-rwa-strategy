@@ -40,9 +40,9 @@ contract VerifyRWAStrategy is BaseScript, Test {
             true,
             "Allocator role is not correctly assigned to parent vault"
         );
-        assertEq(accountingModule.targetApy(), 0.12 ether, "Accounting module target APY does not match expected value");
+        assertEq(accountingModule.targetApy(), 0.11 ether, "Accounting module target APY does not match expected value");
         assertEq(
-            accountingModule.lowerBound(), 0.5 ether, "Accounting module lower bound does not match expected value"
+            accountingModule.lowerBound(), 0.001 ether, "Accounting module lower bound does not match expected value"
         );
         RolesVerification.verifyRole(
             accountingModule,
