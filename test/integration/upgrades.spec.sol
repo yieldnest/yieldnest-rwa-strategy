@@ -11,7 +11,7 @@ import {AccountingModule} from "lib/yieldnest-flex-strategy/src/AccountingModule
 import {AccountingToken} from "lib/yieldnest-flex-strategy/src/AccountingToken.sol";
 import {FlexStrategy} from "lib/yieldnest-flex-strategy/src/FlexStrategy.sol";
 
-contract BasicFunctionalityTest is BaseIntegrationTest {
+contract UpgradesTest is BaseIntegrationTest {
     //DeployRWAStrategy strategy;
 
     function setUp() public override {
