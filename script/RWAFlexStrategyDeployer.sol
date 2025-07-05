@@ -9,15 +9,16 @@ contract RWAFlexStrategyDeployer is FlexStrategyDeployer {
     RewardsSweeper public rewardsSweeper;
     RewardsSweeper public rewardsSweeperImplementation;
 
-    constructor(DeploymentParams memory params) FlexStrategyDeployer(params) {}
+    constructor(DeploymentParams memory params, RewardsSweeper _rewardsSweeperImplementation)
+        FlexStrategyDeployer(params)
+    {
+        rewardsSweeperImplementation = _rewardsSweeperImplementation;
+    }
 
     function configureStrategy() internal virtual override {
         // Assumes the deployment has already happened
 
         // Deploy the RewardsSweeper contract as a TransparentUpgradeableProxy and initialize it
-
-        // Assuming RewardsSweeper is a contract that needs to be deployed
-        rewardsSweeperImplementation = new RewardsSweeper();
 
         rewardsSweeper = RewardsSweeper(
             payable(

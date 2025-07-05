@@ -44,7 +44,7 @@ contract BasicFunctionalityTest is BaseIntegrationTest {
 
     function testAccountingModuleUpgrade() public {
         // Deploy a new implementation of AccountingModule
-        AccountingModule newAccountingModuleImplementation = new AccountingModule(address(0), address(0));
+        AccountingModule newAccountingModuleImplementation = new AccountingModule();
 
         UpgradeUtils.timelockUpgrade(
             deployment.timelock(),
