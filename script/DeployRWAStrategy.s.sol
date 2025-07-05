@@ -25,7 +25,7 @@ contract DeployRWAStrategy is DeployFlexStrategy {
 
     function createDeployer() internal virtual override returns (FlexStrategyDeployer) {
         // pass in the implementation to reduce bytecode
-        RewardsSweeper rewardsSweeperImplementation = new RewardsSweeper();
+        rewardsSweeperImplementation = new RewardsSweeper();
 
         return FlexStrategyDeployer(
             new RWAFlexStrategyDeployer(
