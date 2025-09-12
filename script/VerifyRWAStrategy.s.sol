@@ -11,26 +11,4 @@ import {ProxyUtils} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/script
 import {VerifyFlexStrategy} from "lib/yieldnest-flex-strategy/script/verification/VerifyFlexStrategy.s.sol";
 
 // forge script VerifyFlexStrategy --rpc-url <MAINNET_RPC_URL>
-contract VerifyRWAStrategy is VerifyFlexStrategy {
-    constructor() {
-        // verifyFlexStrategy.setDeploymentParameters(
-        //     BaseScript.DeploymentParameters({
-        //         name: "YieldNest USDC Flex Strategy - ynRWAx - SPV1",
-        //         symbol_: "ynFlex-USDC-ynRWAx-SPV1",
-        //         accountTokenName: "YieldNest Flex Strategy - ynRWAx - SPV1 Accounting Token",
-        //         accountTokenSymbol: "ynFlexUSDC-ynRWAx-SPV1-Tok",
-        //         decimals: 6, // 6 decimals for USDC
-        //         paused: true,
-        //         targetApy: 0.15 ether, // max 15% rewards per year
-        //         lowerBound: 0.0001 ether, // Ability to mark 0.01% of TVL as losses
-        //         minRewardableAssets: 1000e6, // min 1000 USDC
-        //         accountingProcessor: YNRWAX_PROCESSOR,
-        //         baseAsset: IVault(YNRWAX).asset(),
-        //         allocator: YNRWAX,
-        //         safe: SAFE,
-        //         alwaysComputeTotalAssets: true,
-        //         useRewardsSweeper: true
-        //     })
-        // );
-    }
-}
+contract VerifyRWAStrategy is VerifyFlexStrategy {}

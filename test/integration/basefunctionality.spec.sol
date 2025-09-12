@@ -15,9 +15,6 @@ import {DeployFlexStrategy} from "lib/yieldnest-flex-strategy/script/DeployFlexS
 import {IERC20Metadata} from "lib/openzeppelin-contracts/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 contract BaseFunctionalityTest is BaseIntegrationTest {
-    //DeployRWAStrategy strategy;
-
-    address constant ALICE_ADDRESS = address(0x123); // Replace with Alice's actual address
     address constant USDC_ADDRESS = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48; // USDC token address
     uint256 constant DEPOSIT_AMOUNT = 1000 * 10 ** 6; // 1000 USDC with 6 decimals
 
