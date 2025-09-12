@@ -11,16 +11,14 @@ import {ProxyUtils} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/script
 import {MainnetRWAStrategyActors} from "@script/Actors.sol";
 
 contract DeployRWAStrategy is DeployFlexStrategy {
-    address public YNRWAX_PROCESSOR = 0x7e92AbC00F58Eb325C7fC95Ed52ACdf74584Be2c;
+    address public YNRWAX = 0x01Ba69727E2860b37bc1a2bd56999c1aFb4C15D8;
 
     address public SAFE = 0xb34E69c23Df216334496DFFd455618249E6bbFa9;
 
-    address public YNRWAX = 0x01Ba69727E2860b37bc1a2bd56999c1aFb4C15D8;
-
     function _setup() public virtual override {
+        MainnetRWAStrategyActors _actors = new MainnetRWAStrategyActors();
         if (block.chainid == 1) {
             minDelay = 1 days;
-            MainnetRWAStrategyActors _actors = new MainnetRWAStrategyActors();
             actors = IActors(_actors);
             contracts = IContracts(new L1Contracts());
         }
@@ -36,7 +34,7 @@ contract DeployRWAStrategy is DeployFlexStrategy {
                 targetApy: 0.15 ether, // max 15% rewards per year
                 lowerBound: 0.0001 ether, // Ability to mark 0.01% of TVL as losses
                 minRewardableAssets: 1000e6, // min 1000 USDC
-                accountingProcessor: YNRWAX_PROCESSOR,
+                accountingProcessor: _actors.YnProcessor(),
                 baseAsset: IVault(YNRWAX).asset(),
                 allocator: YNRWAX,
                 safe: SAFE,
