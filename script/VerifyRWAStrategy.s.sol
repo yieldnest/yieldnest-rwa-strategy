@@ -20,10 +20,18 @@ contract VerifyRWAStrategy is VerifyFlexStrategy {
 
     address public SAFE = 0xb34E69c23Df216334496DFFd455618249E6bbFa9;
 
-    constructor() {
+    function _setup() public virtual override {
+
         MainnetRWAStrategyActors _actors = new MainnetRWAStrategyActors();
-        setDeploymentParameters(
-            BaseScript.DeploymentParameters({
+        if (block.chainid == 1) {
+            minDelay = 1 days;
+
+            actors = IActors(_actors);
+            contracts = IContracts(new L1Contracts());
+        }
+
+        setVerificationParameters(
+            VerifyFlexStrategy.VerificationParameters({
                 name: "YieldNest USDC Flex Strategy - ynRWAx - SPV1",
                 symbol_: "ynFlex-USDC-ynRWAx-SPV1",
                 accountTokenName: "YieldNest Flex Strategy - ynRWAx - SPV1 Accounting Token",
@@ -35,20 +43,8 @@ contract VerifyRWAStrategy is VerifyFlexStrategy {
                 minRewardableAssets: 1000e6, // min 1000 USDC
                 accountingProcessor: _actors.YnProcessor(),
                 baseAsset: IVault(YNRWAX).asset(),
-                allocator: YNRWAX,
-                safe: SAFE,
-                alwaysComputeTotalAssets: true,
-                useRewardsSweeper: true
+                alwaysComputeTotalAssets: true
             })
         );
-    }
-
-    function _setup() public virtual override {
-        if (block.chainid == 1) {
-            minDelay = 1 days;
-            MainnetRWAStrategyActors _actors = new MainnetRWAStrategyActors();
-            actors = IActors(_actors);
-            contracts = IContracts(new L1Contracts());
-        }
     }
 }
