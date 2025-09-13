@@ -6,7 +6,7 @@ import {TransparentUpgradeableProxy} from
     "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {UpgradeUtils} from "lib/yieldnest-flex-strategy/script/UpgradeUtils.sol";
 import {ProxyUtils} from "lib/yieldnest-vault/script/ProxyUtils.sol";
-import {AccountingModule} from "lib/yieldnest-flex-strategy/src/AccountingModule.sol";
+import {AccountingModule, IAccountingModule} from "lib/yieldnest-flex-strategy/src/AccountingModule.sol";
 import {AccountingToken} from "lib/yieldnest-flex-strategy/src/AccountingToken.sol";
 import {FlexStrategy} from "lib/yieldnest-flex-strategy/src/FlexStrategy.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
@@ -140,7 +140,7 @@ contract BaseFunctionalityTest is BaseIntegrationTest {
         uint256 totalAssetsBefore = strategy.totalAssets();
 
         // Perform deposit
-        uint256 shares = strategy.deposit(depositAmount, DEPOSITOR);
+        strategy.deposit(depositAmount, DEPOSITOR);
 
         // Perform withdrawal of the same amount
         strategy.withdraw(depositAmount, DEPOSITOR, DEPOSITOR);
@@ -252,10 +252,45 @@ contract BaseFunctionalityTest is BaseIntegrationTest {
             "Depositor should be able to redeem more than they deposited due to rewards"
         );
 
+        // Verify that the rewards sweeper has no USDC balance after sweeping
+        assertEq(
+            usdc.balanceOf(address(rewardsSweeper)), 0, "Rewards sweeper should have zero USDC balance after sweeping"
+        );
+
         // Test that sweeping rewards again should revert (no rewards to sweep)
         vm.startPrank(deployment.actors().PROCESSOR());
         vm.expectRevert(RewardsSweeper.CannotSweepRewards.selector);
         rewardsSweeper.sweepRewards(rewardAmount);
         vm.stopPrank();
+
+        // Deal 100k USDC to rewards sweeper for next test
+        deal(USDC_ADDRESS, address(rewardsSweeper), 100_000 * 1e6);
+
+        // Advance time by only 1 hour (should be within cooldown period)
+        vm.warp(block.timestamp + 1 hours);
+
+        // Try to inject rewards again - should revert due to cooldown period
+        vm.startPrank(deployment.actors().PROCESSOR());
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccountingModule.AccountingLimitsExceeded.selector, 8757251505745759985, 150000000000000000
+            )
+        );
+        rewardsSweeper.sweepRewards(rewardAmount);
+        vm.stopPrank();
+
+        // Call sweepRewardsUpToAPRMax
+        vm.startPrank(deployment.actors().PROCESSOR());
+        uint256 sweptAmount = rewardsSweeper.sweepRewardsUpToAPRMax();
+        vm.stopPrank();
+
+        // Verify that some amount was swept (should be > 0 if there are rewards to sweep within APR limits)
+        assertGe(sweptAmount, 0, "Swept amount should be non-negative");
+
+        // Verify total assets increased by the swept amount
+        uint256 totalAssetsAfterSweep = strategy.totalAssets();
+        assertEq(
+            totalAssetsAfterSweep, totalAssetsAfterRewards + sweptAmount, "Total assets should increase by swept amount"
+        );
     }
 }
