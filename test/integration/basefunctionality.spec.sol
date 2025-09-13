@@ -2,7 +2,6 @@ pragma solidity ^0.8.28;
 
 import "forge-std/Test.sol";
 import {BaseIntegrationTest} from "./BaseIntegrationTest.sol";
-import {RewardsSweeper} from "lib/yieldnest-flex-strategy/src/utils/RewardsSweeper.sol";
 import {TransparentUpgradeableProxy} from
     "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {UpgradeUtils} from "lib/yieldnest-flex-strategy/script/UpgradeUtils.sol";
@@ -11,7 +10,7 @@ import {AccountingModule} from "lib/yieldnest-flex-strategy/src/AccountingModule
 import {AccountingToken} from "lib/yieldnest-flex-strategy/src/AccountingToken.sol";
 import {FlexStrategy} from "lib/yieldnest-flex-strategy/src/FlexStrategy.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
-import {DeployFlexStrategy} from "lib/yieldnest-flex-strategy/script/DeployFlexStrategy.s.sol";
+import {DeployFlexStrategy, RewardsSweeper} from "lib/yieldnest-flex-strategy/script/DeployFlexStrategy.s.sol";
 import {IERC20Metadata} from "lib/openzeppelin-contracts/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 contract BaseFunctionalityTest is BaseIntegrationTest {
@@ -173,5 +172,90 @@ contract BaseFunctionalityTest is BaseIntegrationTest {
         // Assert that total supply decreased by exactly the shares that were burned
         uint256 totalSupplyAfter = strategy.totalSupply();
         assertEq(totalSupplyAfter, 0, "Total supply should be zero after complete withdrawal");
+    }
+
+    function test_deposit_and_inject_rewards_with_rewards_sweeper() public {
+        // Get USDC token and strategy
+        IERC20 usdc = IERC20(USDC_ADDRESS);
+        FlexStrategy strategy = FlexStrategy(payable(address(deployment.strategy())));
+        RewardsSweeper rewardsSweeper = deployment.rewardsSweeper();
+
+        // 1 million USDC (6 decimals) and 100k USDC reward
+        uint256 depositAmount = 1_000_000 * 1e6;
+        uint256 rewardAmount = 1_000 * 1e6;
+
+        // Deal USDC to depositor and rewards sweeper
+        deal(USDC_ADDRESS, DEPOSITOR, depositAmount);
+        deal(USDC_ADDRESS, address(rewardsSweeper), rewardAmount);
+
+        // Switch to depositor for the deposit
+        vm.startPrank(DEPOSITOR);
+
+        // Approve strategy to spend USDC
+        usdc.approve(address(strategy), depositAmount);
+
+        // Get balances before deposit
+        uint256 totalAssetsBefore = strategy.totalAssets();
+        uint256 totalSupplyBefore = strategy.totalSupply();
+
+        // Perform deposit
+        uint256 shares = strategy.deposit(depositAmount, DEPOSITOR);
+
+        vm.stopPrank();
+
+        // Process accounting to update state
+        strategy.processAccounting();
+
+        // Get state after deposit
+        uint256 totalAssetsAfterDeposit = strategy.totalAssets();
+        uint256 totalSupplyAfterDeposit = strategy.totalSupply();
+
+        // Verify deposit was successful
+        assertGt(shares, 0, "Should receive shares for deposit");
+        assertEq(
+            totalAssetsAfterDeposit, totalAssetsBefore + depositAmount, "Total assets should increase by deposit amount"
+        );
+        assertEq(totalSupplyAfterDeposit, totalSupplyBefore + shares, "Total supply should increase by shares minted");
+
+        // Advance time by 1 month (30 days)
+        vm.warp(block.timestamp + 30 days);
+
+        // Inject rewards using rewards sweeper
+        vm.startPrank(deployment.actors().PROCESSOR());
+        rewardsSweeper.sweepRewards(rewardAmount);
+        vm.stopPrank();
+
+        // Process accounting to capture the rewards
+        strategy.processAccounting();
+
+        // Get state after rewards injection
+        uint256 totalAssetsAfterRewards = strategy.totalAssets();
+        uint256 totalSupplyAfterRewards = strategy.totalSupply();
+
+        // Verify rewards injection was successful
+        assertEq(
+            totalAssetsAfterRewards,
+            totalAssetsAfterDeposit + rewardAmount,
+            "Total assets should increase by reward amount after injection"
+        );
+        assertEq(
+            totalSupplyAfterRewards,
+            totalSupplyAfterDeposit,
+            "Total supply should remain the same after rewards injection (no new shares minted)"
+        );
+
+        // Verify the depositor can redeem more assets than they deposited due to rewards
+        uint256 redeemableAssets = strategy.previewRedeem(shares);
+        assertGt(
+            redeemableAssets,
+            depositAmount,
+            "Depositor should be able to redeem more than they deposited due to rewards"
+        );
+
+        // Test that sweeping rewards again should revert (no rewards to sweep)
+        vm.startPrank(deployment.actors().PROCESSOR());
+        vm.expectRevert(RewardsSweeper.CannotSweepRewards.selector);
+        rewardsSweeper.sweepRewards(rewardAmount);
+        vm.stopPrank();
     }
 }
