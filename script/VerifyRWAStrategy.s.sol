@@ -18,10 +18,7 @@ import {IVault} from "@yieldnest-vault/interface/IVault.sol";
 contract VerifyRWAStrategy is VerifyFlexStrategy {
     address public YNRWAX = 0x01Ba69727E2860b37bc1a2bd56999c1aFb4C15D8;
 
-    address public SAFE = 0xb34E69c23Df216334496DFFd455618249E6bbFa9;
-
     function _setup() public virtual override {
-
         MainnetRWAStrategyActors _actors = new MainnetRWAStrategyActors();
         if (block.chainid == 1) {
             minDelay = 1 days;

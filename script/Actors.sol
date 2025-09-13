@@ -31,4 +31,6 @@ contract MainnetRWAStrategyActors is IActors {
     address public constant UNAUTHORIZED = address(0);
 
     address public constant REWARDS_SWEEPER_ADMIN = 0x5Bf7a88e755EABa97BE36EFfB34B32793e140Fa3;
+
+    address public constant SAFE = 0xb34E69c23Df216334496DFFd455618249E6bbFa9;
 }

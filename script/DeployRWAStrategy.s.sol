@@ -13,8 +13,6 @@ import {MainnetRWAStrategyActors} from "@script/Actors.sol";
 contract DeployRWAStrategy is DeployFlexStrategy {
     address public YNRWAX = 0x01Ba69727E2860b37bc1a2bd56999c1aFb4C15D8;
 
-    address public SAFE = 0xb34E69c23Df216334496DFFd455618249E6bbFa9;
-
     function _setup() public virtual override {
         MainnetRWAStrategyActors _actors = new MainnetRWAStrategyActors();
         if (block.chainid == 1) {
@@ -37,7 +35,7 @@ contract DeployRWAStrategy is DeployFlexStrategy {
                 accountingProcessor: _actors.YnProcessor(),
                 baseAsset: IVault(YNRWAX).asset(),
                 allocator: YNRWAX,
-                safe: SAFE,
+                safe: _actors.SAFE(),
                 alwaysComputeTotalAssets: true,
                 useRewardsSweeper: true
             })
