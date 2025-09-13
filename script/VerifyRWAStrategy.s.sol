@@ -38,7 +38,7 @@ contract VerifyRWAStrategy is VerifyFlexStrategy {
                 targetApy: 0.15 ether, // max 15% rewards per year
                 lowerBound: 0.0001 ether, // Ability to mark 0.01% of TVL as losses
                 minRewardableAssets: 1000e6, // min 1000 USDC
-                accountingProcessor: _actors.YnProcessor(),
+                accountingProcessor: _actors.PROCESSOR(),
                 baseAsset: IVault(YNRWAX).asset(),
                 alwaysComputeTotalAssets: true
             })
