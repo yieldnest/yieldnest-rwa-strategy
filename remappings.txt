@@ -9,3 +9,4 @@ lib/yieldnest-flex-strategy/lib/yieldnest-vault:src=lib/yieldnest-flex-strategy/
 lib/yieldnest-flex-strategy/lib/yieldnest-vault:script=lib/yieldnest-flex-strategy/lib/yieldnest-vault/script
 script=lib/yieldnest-flex-strategy/script
 @script=script
+lib/yieldnest-flex-strategy:src=lib/yieldnest-flex-strategy/src
