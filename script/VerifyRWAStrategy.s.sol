@@ -27,6 +27,9 @@ contract VerifyRWAStrategy is VerifyFlexStrategy {
             contracts = IContracts(new L1Contracts());
         }
 
+        address[] memory _allocators = new address[](1);
+        _allocators[0] = YNRWAX;
+
         setVerificationParameters(
             VerifyFlexStrategy.VerificationParameters({
                 name: "YieldNest USDC Flex Strategy - ynRWAx - SPV1",
@@ -40,6 +43,7 @@ contract VerifyRWAStrategy is VerifyFlexStrategy {
                 minRewardableAssets: 1000e6, // min 1000 USDC
                 accountingProcessor: _actors.PROCESSOR(),
                 baseAsset: IVault(YNRWAX).asset(),
+                allocators: _allocators,
                 alwaysComputeTotalAssets: true
             })
         );

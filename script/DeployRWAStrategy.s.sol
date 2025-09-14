@@ -20,6 +20,8 @@ contract DeployRWAStrategy is DeployFlexStrategy {
             actors = IActors(_actors);
             contracts = IContracts(new L1Contracts());
         }
+        address[] memory _allocators = new address[](1);
+        _allocators[0] = YNRWAX;
 
         setDeploymentParameters(
             BaseScript.DeploymentParameters({
@@ -34,7 +36,7 @@ contract DeployRWAStrategy is DeployFlexStrategy {
                 minRewardableAssets: 1000e6, // min 1000 USDC
                 accountingProcessor: _actors.PROCESSOR(),
                 baseAsset: IVault(YNRWAX).asset(),
-                allocator: YNRWAX,
+                allocators: _allocators,
                 safe: _actors.SAFE(),
                 alwaysComputeTotalAssets: true,
                 useRewardsSweeper: true
