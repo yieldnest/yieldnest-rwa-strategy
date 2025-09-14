@@ -1,0 +1,22 @@
+{
+  "admin": "0xfcad670592a3b24869C0b51a6c6FDED4F95D6975",
+  "baseAsset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+  "deployer": "0x4558E566F245CE69B6EC2f12c5b8638ce8c6b829",
+  "rateProvider": "0x7b028c56212f574343BA1D84F26B381e12d10479",
+  "safe": "0xb34E69c23Df216334496DFFd455618249E6bbFa9",
+  "symbol": "ynFlex-USDC-ynRWAx-SPV1",
+  "timelock": "0x9F58041aC9d30dcf1B270Af0F3724A9D5ad68e88",
+  "useRewardsSweeper": true,
+  "ynFlex-USDC-ynRWAx-SPV1-accountingModule-implementation": "0xe0Caa5Ff1f2637562Cf70823c2c297477376E823",
+  "ynFlex-USDC-ynRWAx-SPV1-accountingModule-proxy": "0x71B1855F0BBdDC24D38925b20D6AD1aeeE346b7C",
+  "ynFlex-USDC-ynRWAx-SPV1-accountingModule-proxyAdmin": "0x2f0d755C53Be33c89d4ab9F55aFaDCa61A4A61f7",
+  "ynFlex-USDC-ynRWAx-SPV1-accountingToken-implementation": "0xa10C3B8F12E5e3a49cC749E1dD3b511cF5E7E35b",
+  "ynFlex-USDC-ynRWAx-SPV1-accountingToken-proxy": "0x3009D7d91C6acF57F4Ad724eD999ce37116AD7d3",
+  "ynFlex-USDC-ynRWAx-SPV1-accountingToken-proxyAdmin": "0xc8FcFD72ABE2081fd203fb8dEef6aa123c1df6Ff",
+  "ynFlex-USDC-ynRWAx-SPV1-implementation": "0x757Dc8E706EfDa25e9faEb52aB4001FBb08FB6F8",
+  "ynFlex-USDC-ynRWAx-SPV1-proxy": "0xF6e1443e3F70724cec8C0a779C7C35A8DcDA928B",
+  "ynFlex-USDC-ynRWAx-SPV1-proxyAdmin": "0x0F7622bCb4A99ED449B1f30019c1d2afb083FAF0",
+  "ynFlex-USDC-ynRWAx-SPV1-rewardsSweeper-implementation": "0xE113B91580b232DF80b0f1bacD0ca746493fC765",
+  "ynFlex-USDC-ynRWAx-SPV1-rewardsSweeper-proxy": "0xbAC19FD66262629eEA13F1fd36ba9ae654bDfc76",
+  "ynFlex-USDC-ynRWAx-SPV1-rewardsSweeper-proxyAdmin": "0x5ae6ADC8893A51D0Ec161B1fBefb8aDfdF1b381A"
+}
