@@ -1,66 +1,51 @@
-## Foundry
+## RWA Flex Strategy
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
 
-Foundry consists of:
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+### Flex Strategy verification
 
-## Documentation
+#### Verify FlexStrategyDeployer
 
-https://book.getfoundry.sh/
+The strategy is deployed by `FlexStrategyDeployer.sol` in one transaction.
 
-## Usage
+One needs to only verify the bytecode of the FlexStrategyDeployer (the `deployer` field in the JSON deployment file) and all its constrcutor parameters + implementations.
 
-### Build
 
-```shell
-$ forge build
+Run 
+
+
+```forge test --rpc-url YOUR_PRC```
+
+
+See all tests pass and get the build created.
+
+Do the following to verify:
+
+For the *example* deployer at `0x4558E566F245CE69B6EC2f12c5b8638ce8c6b829` go to:
+
+https://etherscan.io/address/0x4558E566F245CE69B6EC2f12c5b8638ce8c6b829#code
+
+Take the `Contract Creation Code` at the bottom, and the bytecode in `out/FlexStrategyDeployer.sol/FlexStrategyDeployer.json` 
+
+And ensure both match for the length of the build bytecode (the latter). The `Contract Creation Code` ends with the constructor parameters.
+
+
+#### Verify Implementations
+
+
+Run the following to verify the bytecode for the implementation contracts:
+
+```
+ bash script/verification/verify-bytecode.sh $DEPLOYMENT_FILE_PATH $ETHERSCAN_API_KEY $RPC_URL
 ```
 
-### Test
+Caveat: this currently does *not* work for FlexStrategy.sol due to the External Lib dependencies.
+Verify that one manually.
 
-```shell
-$ forge test
+
+Example:
+
+```
+bash script/verification/verify-bytecode.sh "deployments/ynFlex-USDC-ynRWAx-SPV1-1.json" XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX "https://eth-mainnet.g.alchemy.com/v2/ALCHEMY_API_KEY"
 ```
 
-### Format
-
-```shell
-$ forge fmt
-```
-
-### Gas Snapshots
-
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
