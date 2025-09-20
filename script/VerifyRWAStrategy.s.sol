@@ -18,12 +18,20 @@ import {IVault} from "@yieldnest-vault/interface/IVault.sol";
 contract VerifyRWAStrategy is VerifyFlexStrategy {
     address public YNRWAX = 0x01Ba69727E2860b37bc1a2bd56999c1aFb4C15D8;
 
-    address public SAFE = 0xb34E69c23Df216334496DFFd455618249E6bbFa9;
-
-    constructor() {
+    function _setup() public virtual override {
         MainnetRWAStrategyActors _actors = new MainnetRWAStrategyActors();
-        setDeploymentParameters(
-            BaseScript.DeploymentParameters({
+        if (block.chainid == 1) {
+            minDelay = 1 days;
+
+            actors = IActors(_actors);
+            contracts = IContracts(new L1Contracts());
+        }
+
+        address[] memory _allocators = new address[](1);
+        _allocators[0] = YNRWAX;
+
+        setVerificationParameters(
+            VerifyFlexStrategy.VerificationParameters({
                 name: "YieldNest USDC Flex Strategy - ynRWAx - SPV1",
                 symbol_: "ynFlex-USDC-ynRWAx-SPV1",
                 accountTokenName: "YieldNest Flex Strategy - ynRWAx - SPV1 Accounting Token",
@@ -33,22 +41,11 @@ contract VerifyRWAStrategy is VerifyFlexStrategy {
                 targetApy: 0.15 ether, // max 15% rewards per year
                 lowerBound: 0.0001 ether, // Ability to mark 0.01% of TVL as losses
                 minRewardableAssets: 1000e6, // min 1000 USDC
-                accountingProcessor: _actors.YnProcessor(),
+                accountingProcessor: _actors.PROCESSOR(),
                 baseAsset: IVault(YNRWAX).asset(),
-                allocator: YNRWAX,
-                safe: SAFE,
-                alwaysComputeTotalAssets: true,
-                useRewardsSweeper: true
+                allocators: _allocators,
+                alwaysComputeTotalAssets: true
             })
         );
-    }
-
-    function _setup() public virtual override {
-        if (block.chainid == 1) {
-            minDelay = 1 days;
-            MainnetRWAStrategyActors _actors = new MainnetRWAStrategyActors();
-            actors = IActors(_actors);
-            contracts = IContracts(new L1Contracts());
-        }
     }
 }

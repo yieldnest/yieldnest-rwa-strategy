@@ -13,8 +13,6 @@ import {MainnetRWAStrategyActors} from "@script/Actors.sol";
 contract DeployRWAStrategy is DeployFlexStrategy {
     address public YNRWAX = 0x01Ba69727E2860b37bc1a2bd56999c1aFb4C15D8;
 
-    address public SAFE = 0xb34E69c23Df216334496DFFd455618249E6bbFa9;
-
     function _setup() public virtual override {
         MainnetRWAStrategyActors _actors = new MainnetRWAStrategyActors();
         if (block.chainid == 1) {
@@ -22,6 +20,8 @@ contract DeployRWAStrategy is DeployFlexStrategy {
             actors = IActors(_actors);
             contracts = IContracts(new L1Contracts());
         }
+        address[] memory _allocators = new address[](1);
+        _allocators[0] = YNRWAX;
 
         setDeploymentParameters(
             BaseScript.DeploymentParameters({
@@ -34,10 +34,10 @@ contract DeployRWAStrategy is DeployFlexStrategy {
                 targetApy: 0.15 ether, // max 15% rewards per year
                 lowerBound: 0.0001 ether, // Ability to mark 0.01% of TVL as losses
                 minRewardableAssets: 1000e6, // min 1000 USDC
-                accountingProcessor: _actors.YnProcessor(),
+                accountingProcessor: _actors.PROCESSOR(),
                 baseAsset: IVault(YNRWAX).asset(),
-                allocator: YNRWAX,
-                safe: SAFE,
+                allocators: _allocators,
+                safe: _actors.SAFE(),
                 alwaysComputeTotalAssets: true,
                 useRewardsSweeper: true
             })
