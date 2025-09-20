@@ -17,13 +17,17 @@ contract BaseFunctionalityTest is BaseIntegrationTest {
     address constant USDC_ADDRESS = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48; // USDC token address
     uint256 constant DEPOSIT_AMOUNT = 1000 * 10 ** 6; // 1000 USDC with 6 decimals
 
+    address public constant STRATEGY_ADDRESS = 0xF6e1443e3F70724cec8C0a779C7C35A8DcDA928B;
+
     address public constant DEPOSITOR = address(0x1234567890123456789012345678901234567890);
 
     function setUp() public override {
         super.setUp();
-        // Prank as admin to grant ALLOCATOR role to Alice
+
         vm.startPrank(deployment.actors().ADMIN());
-        deployment.strategy().grantRole(deployment.strategy().ALLOCATOR_ROLE(), DEPOSITOR);
+        FlexStrategy(payable(address(strategy))).grantRole(
+            FlexStrategy(payable(address(strategy))).ALLOCATOR_ROLE(), DEPOSITOR
+        );
         vm.stopPrank();
     }
 
@@ -117,6 +121,8 @@ contract BaseFunctionalityTest is BaseIntegrationTest {
         FlexStrategy strategy = FlexStrategy(payable(address(deployment.strategy()))); // Using index i for strategy selection
         IERC20 asset = IERC20(strategy.asset());
 
+        uint256 initialTotalSupply = strategy.totalSupply();
+
         // Grant DEPOSITOR the ALLOCATOR_ROLE
         vm.startPrank(deployment.actors().ADMIN());
         FlexStrategy(payable(address(strategy))).grantRole(
@@ -171,7 +177,7 @@ contract BaseFunctionalityTest is BaseIntegrationTest {
 
         // Assert that total supply decreased by exactly the shares that were burned
         uint256 totalSupplyAfter = strategy.totalSupply();
-        assertEq(totalSupplyAfter, 0, "Total supply should be zero after complete withdrawal");
+        assertEq(totalSupplyAfter, initialTotalSupply, "Total supply should be initial after complete withdrawal");
     }
 
     function test_deposit_and_inject_rewards_with_rewards_sweeper() public {
