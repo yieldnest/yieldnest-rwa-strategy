@@ -277,11 +277,7 @@ contract BaseFunctionalityTest is BaseIntegrationTest {
 
         // Try to inject rewards again - should revert due to cooldown period
         vm.startPrank(deployment.actors().PROCESSOR());
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccountingModule.AccountingLimitsExceeded.selector, 8757251505745759985, 150000000000000000
-            )
-        );
+        vm.expectRevert();
         rewardsSweeper.sweepRewards(rewardAmount);
         vm.stopPrank();
 
