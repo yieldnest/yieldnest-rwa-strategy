@@ -9,7 +9,7 @@ import {BaseScript} from "lib/yieldnest-flex-strategy/script/BaseScript.sol";
 contract FlexStrategyDeployment is BaseIntegrationTest {
     function test_verify_setup() public {
         VerifyRWAStrategy verify = new VerifyRWAStrategy();
-        verify.setEnv(BaseScript.Env.TEST);
+        verify.setEnv(BaseScript.Env.PROD);
         verify.run();
     }
 
