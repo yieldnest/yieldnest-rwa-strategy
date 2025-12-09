@@ -2,8 +2,9 @@ pragma solidity ^0.8.28;
 
 import "forge-std/Test.sol";
 import {BaseIntegrationTest} from "./BaseIntegrationTest.sol";
-import {TransparentUpgradeableProxy} from
-    "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {UpgradeUtils} from "lib/yieldnest-flex-strategy/script/UpgradeUtils.sol";
 import {ProxyUtils} from "lib/yieldnest-vault/script/ProxyUtils.sol";
 import {AccountingModule, IAccountingModule} from "lib/yieldnest-flex-strategy/src/AccountingModule.sol";
@@ -25,9 +26,8 @@ contract BaseFunctionalityTest is BaseIntegrationTest {
         super.setUp();
 
         vm.startPrank(deployment.actors().ADMIN());
-        FlexStrategy(payable(address(strategy))).grantRole(
-            FlexStrategy(payable(address(strategy))).ALLOCATOR_ROLE(), DEPOSITOR
-        );
+        FlexStrategy(payable(address(strategy)))
+            .grantRole(FlexStrategy(payable(address(strategy))).ALLOCATOR_ROLE(), DEPOSITOR);
         vm.stopPrank();
     }
 
@@ -38,9 +38,8 @@ contract BaseFunctionalityTest is BaseIntegrationTest {
 
         // Grant ALLOCATOR_ROLE to depositor
         vm.startPrank(deployment.actors().ADMIN());
-        FlexStrategy(payable(address(strategy))).grantRole(
-            FlexStrategy(payable(address(strategy))).ALLOCATOR_ROLE(), DEPOSITOR
-        );
+        FlexStrategy(payable(address(strategy)))
+            .grantRole(FlexStrategy(payable(address(strategy))).ALLOCATOR_ROLE(), DEPOSITOR);
         vm.stopPrank();
         // 1 million USDC (6 decimals)
         uint256 depositAmount = 1_000_000 * 1e6;
@@ -125,9 +124,8 @@ contract BaseFunctionalityTest is BaseIntegrationTest {
 
         // Grant DEPOSITOR the ALLOCATOR_ROLE
         vm.startPrank(deployment.actors().ADMIN());
-        FlexStrategy(payable(address(strategy))).grantRole(
-            FlexStrategy(payable(address(strategy))).ALLOCATOR_ROLE(), DEPOSITOR
-        );
+        FlexStrategy(payable(address(strategy)))
+            .grantRole(FlexStrategy(payable(address(strategy))).ALLOCATOR_ROLE(), DEPOSITOR);
         vm.stopPrank();
 
         // 1 million of the asset (assuming 6 decimals, but this will work for any decimals)
