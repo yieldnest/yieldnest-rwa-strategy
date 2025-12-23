@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {BaseIntegrationTest} from "./BaseIntegrationTest.sol";
-import {VerifyRWAStrategy} from "@script/VerifyRWAStrategy.s.sol";
+import {VerifyStrategy} from "@script/VerifyStrategy.s.sol";
 import {BaseScript} from "lib/yieldnest-flex-strategy/script/BaseScript.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IAccountingModule} from "lib/yieldnest-flex-strategy/src/AccountingModule.sol";
