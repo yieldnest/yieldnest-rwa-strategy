@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {IActors} from "@yieldnest-vault-script/Actors.sol";
 
-contract MainnetRWAStrategyActors is IActors {
+contract MainnetStrategyActors is IActors {
     address public constant YnSecurityCouncil = 0xfcad670592a3b24869C0b51a6c6FDED4F95D6975;
     address public constant YnProcessor = 0x7e92AbC00F58Eb325C7fC95Ed52ACdf74584Be2c;
     address public constant YnDev = 0xa08F39d30dc865CC11a49b6e5cBd27630D6141C3;

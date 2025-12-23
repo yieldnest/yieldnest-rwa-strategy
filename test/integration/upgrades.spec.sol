@@ -12,7 +12,7 @@ import {AccountingToken} from "lib/yieldnest-flex-strategy/src/AccountingToken.s
 import {FlexStrategy} from "lib/yieldnest-flex-strategy/src/FlexStrategy.sol";
 
 contract UpgradesTest is BaseIntegrationTest {
-    //DeployRWAStrategy strategy;
+    //DeployStrategy strategy;
 
     function setUp() public override {
         super.setUp();
