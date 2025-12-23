@@ -9,7 +9,12 @@ import {ISablierLockupLinear} from "./interfaces/sablier/ISablierLockupLinear.so
 import {IAccountingModule} from "lib/yieldnest-flex-strategy/src/AccountingModule.sol";
 
 contract StrategyKeeper {
-    // --- Config ---
+
+    /// CONSTANTS ///
+ 
+    bytes4 public constant EIP1271_MAGIC_VALUE = bytes4(keccak256("isValidSignature(bytes32,bytes)"));
+
+    /// VARIABLES ///
     IERC20 public immutable asset;
     IVault public immutable vault;
     FlexStrategy public immutable strategy;
@@ -23,6 +28,8 @@ contract StrategyKeeper {
 
     address public strategyFundsReceiver;
     address public feeReceiver;
+
+    mapping(bytes32 => bool) public approvedHash;
 
     // --- Events ---
     event Rolled(uint256 usdcRolled, uint256 sablierStreamId, uint256 time);
@@ -108,5 +115,62 @@ contract StrategyKeeper {
         calldatas[1] = depositCalldata;
 
         vault.processor(targets, values, calldatas);
+    }
+
+    /// EIP1271 implementation ///
+
+    /**
+     * 
+     * @param hash 
+     * @param null 
+     */
+    function isValidSignature(
+        bytes32 hash,
+        bytes calldata /* signature */
+    ) external view override returns (bytes4) {
+        // You can ignore `signature` entirely if you use an approval mapping.
+        if (approvedHash[hash]) {
+            return EIP1271_MAGIC_VALUE;
+        }
+
+        return 0xffffffff;
+    }
+
+    /**
+     * @notice Produces a valid EIP-1271 contract signature for "Safe" smart contract wallets.
+     * @param signer The address of the smart contract that will be the signer (typically this contract).
+     * @param data The data to be signed (as bytes).
+     * @return signature The constructed signature bytes for the Safe.
+     *
+     * If you want the produced signature to be valid for Safe's isValidSignature logic with (v == 0),
+     * the encoding is:
+     *   - bytes1: v = 0
+     *   - bytes32: r = signer address, left-padded (address(bytes20) stored in lower 20 bytes)
+     *   - bytes32: s = offset in signature bytes (usually 65 * threshold for threshold == 1)
+     *   - bytes: EIP1271 contract signature (dynamic, starts at offset)
+     *
+     * This is useful for relaying a contract signature through Gnosis Safe modules or similar.
+     */
+    function produceSafeContractSignature(address signer, bytes32 dataHash, bytes memory data) public pure returns (bytes memory signature) {
+        // The contract signature must be a valid EIP1271 signature
+        bytes memory contractSignature = abi.encodePacked(
+            bytes4(0x1626ba7e) // EIP-1271 magic value
+        );
+
+        // The offset for s should be right after the static signature part (65 bytes for one signature)
+        // In practice, Safe expects s = 65 (0x41) when only one contract signature is appended after
+        uint256 sOffset = 65;
+
+        // v == 0
+        bytes1 v = 0x00;
+
+        // r = left-padded address, Safe expects r = address of contract as uint256
+        bytes32 r = bytes32(uint256(uint160(signer)));
+
+        // s = offset pointer; for 1 signature, s = 65 (static), since "signatures" are concatenated
+        bytes32 s = bytes32(sOffset);
+
+        // Final signature layout: v (1) + r (32) + s (32) + contractSignature (dynamic)
+        return abi.encodePacked(v, r, s, contractSignature);
     }
 }
