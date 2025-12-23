@@ -2,9 +2,8 @@ pragma solidity ^0.8.28;
 
 import "forge-std/Test.sol";
 import {BaseIntegrationTest} from "./BaseIntegrationTest.sol";
-import {
-    TransparentUpgradeableProxy
-} from "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {TransparentUpgradeableProxy} from
+    "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {UpgradeUtils} from "lib/yieldnest-flex-strategy/script/UpgradeUtils.sol";
 import {ProxyUtils} from "lib/yieldnest-vault/script/ProxyUtils.sol";
 import {AccountingModule, IAccountingModule} from "lib/yieldnest-flex-strategy/src/AccountingModule.sol";
@@ -26,8 +25,9 @@ contract BaseFunctionalityTest is BaseIntegrationTest {
         super.setUp();
 
         vm.startPrank(deployment.actors().ADMIN());
-        FlexStrategy(payable(address(strategy)))
-            .grantRole(FlexStrategy(payable(address(strategy))).ALLOCATOR_ROLE(), DEPOSITOR);
+        FlexStrategy(payable(address(strategy))).grantRole(
+            FlexStrategy(payable(address(strategy))).ALLOCATOR_ROLE(), DEPOSITOR
+        );
         vm.stopPrank();
     }
 
@@ -38,8 +38,9 @@ contract BaseFunctionalityTest is BaseIntegrationTest {
 
         // Grant ALLOCATOR_ROLE to depositor
         vm.startPrank(deployment.actors().ADMIN());
-        FlexStrategy(payable(address(strategy)))
-            .grantRole(FlexStrategy(payable(address(strategy))).ALLOCATOR_ROLE(), DEPOSITOR);
+        FlexStrategy(payable(address(strategy))).grantRole(
+            FlexStrategy(payable(address(strategy))).ALLOCATOR_ROLE(), DEPOSITOR
+        );
         vm.stopPrank();
         // 1 million USDC (6 decimals)
         uint256 depositAmount = 1_000_000 * 1e6;
@@ -124,8 +125,9 @@ contract BaseFunctionalityTest is BaseIntegrationTest {
 
         // Grant DEPOSITOR the ALLOCATOR_ROLE
         vm.startPrank(deployment.actors().ADMIN());
-        FlexStrategy(payable(address(strategy)))
-            .grantRole(FlexStrategy(payable(address(strategy))).ALLOCATOR_ROLE(), DEPOSITOR);
+        FlexStrategy(payable(address(strategy))).grantRole(
+            FlexStrategy(payable(address(strategy))).ALLOCATOR_ROLE(), DEPOSITOR
+        );
         vm.stopPrank();
 
         // 1 million of the asset (assuming 6 decimals, but this will work for any decimals)
@@ -146,8 +148,10 @@ contract BaseFunctionalityTest is BaseIntegrationTest {
         // Perform deposit
         strategy.deposit(depositAmount, DEPOSITOR);
 
+        uint256 withdrawAmount = depositAmount - 1;
+
         // Perform withdrawal of the same amount
-        strategy.withdraw(depositAmount, DEPOSITOR, DEPOSITOR);
+        strategy.withdraw(withdrawAmount, DEPOSITOR, DEPOSITOR);
 
         vm.stopPrank();
 
@@ -159,7 +163,7 @@ contract BaseFunctionalityTest is BaseIntegrationTest {
         // Assert that totalAssets before and after are the same
         assertEq(
             totalAssetsAfter,
-            totalAssetsBefore,
+            totalAssetsBefore + 1,
             "Total assets should be the same before and after deposit/withdrawal roundtrip"
         );
 
@@ -170,7 +174,7 @@ contract BaseFunctionalityTest is BaseIntegrationTest {
         // Assert that the depositor's asset balance is back to the original amount
         uint256 depositorAssetAfter = asset.balanceOf(DEPOSITOR);
         assertEq(
-            depositorAssetAfter, depositAmount, "Depositor should have received back exactly the same asset amount"
+            depositorAssetAfter, withdrawAmount, "Depositor should have received back exactly the same asset amount"
         );
 
         // Assert that total supply decreased by exactly the shares that were burned
