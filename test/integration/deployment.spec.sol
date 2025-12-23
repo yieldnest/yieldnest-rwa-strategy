@@ -3,12 +3,12 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {BaseIntegrationTest} from "./BaseIntegrationTest.sol";
-import {VerifyRWAStrategy} from "@script/VerifyRWAStrategy.s.sol";
+import {VerifyStrategy} from "@script/VerifyStrategy.s.sol";
 import {BaseScript} from "lib/yieldnest-flex-strategy/script/BaseScript.sol";
 
 contract FlexStrategyDeployment is BaseIntegrationTest {
     function test_verify_setup() public {
-        VerifyRWAStrategy verify = new VerifyRWAStrategy();
+        VerifyStrategy verify = new VerifyStrategy();
         verify.setEnv(BaseScript.Env.PROD);
         verify.run();
     }

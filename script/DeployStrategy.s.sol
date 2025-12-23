@@ -8,13 +8,13 @@ import {IActors} from "@yieldnest-vault-script/Actors.sol";
 import {console} from "forge-std/console.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyUtils} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/script/ProxyUtils.sol";
-import {MainnetRWAStrategyActors} from "@script/Actors.sol";
+import {MainnetStrategyActors} from "@script/Actors.sol";
 
-contract DeployRWAStrategy is DeployFlexStrategy {
+contract DeployStrategy is DeployFlexStrategy {
     address public YNRWAX = 0x01Ba69727E2860b37bc1a2bd56999c1aFb4C15D8;
 
     function _setup() public virtual override {
-        MainnetRWAStrategyActors _actors = new MainnetRWAStrategyActors();
+        MainnetStrategyActors _actors = new MainnetStrategyActors();
         if (block.chainid == 1) {
             minDelay = 1 days;
             actors = IActors(_actors);
