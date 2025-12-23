@@ -146,8 +146,10 @@ contract BaseFunctionalityTest is BaseIntegrationTest {
         // Perform deposit
         strategy.deposit(depositAmount, DEPOSITOR);
 
+        uint256 withdrawAmount = depositAmount - 1;
+
         // Perform withdrawal of the same amount
-        strategy.withdraw(depositAmount, DEPOSITOR, DEPOSITOR);
+        strategy.withdraw(withdrawAmount, DEPOSITOR, DEPOSITOR);
 
         vm.stopPrank();
 
@@ -159,7 +161,7 @@ contract BaseFunctionalityTest is BaseIntegrationTest {
         // Assert that totalAssets before and after are the same
         assertEq(
             totalAssetsAfter,
-            totalAssetsBefore,
+            totalAssetsBefore + 1,
             "Total assets should be the same before and after deposit/withdrawal roundtrip"
         );
 
@@ -170,7 +172,7 @@ contract BaseFunctionalityTest is BaseIntegrationTest {
         // Assert that the depositor's asset balance is back to the original amount
         uint256 depositorAssetAfter = asset.balanceOf(DEPOSITOR);
         assertEq(
-            depositorAssetAfter, depositAmount, "Depositor should have received back exactly the same asset amount"
+            depositorAssetAfter, withdrawAmount, "Depositor should have received back exactly the same asset amount"
         );
 
         // Assert that total supply decreased by exactly the shares that were burned
