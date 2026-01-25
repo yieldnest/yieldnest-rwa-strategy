@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Test, console} from "forge-std/Test.sol";
-import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {StrategyKeeper, IStrategyKeeper} from "@src/StrategyKeeper.sol";
 import {KeeperCompanion, IKeeperCompanion} from "@src/KeeperCompanion.sol";
 
@@ -53,7 +53,7 @@ contract StrategyKeeperTest is Test {
             )
         );
 
-        ERC1967Proxy proxy = new ERC1967Proxy(address(keeperImpl), initData);
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(keeperImpl), admin, initData);
         keeper = StrategyKeeper(address(proxy));
 
         // Deploy companion with keeper as owner

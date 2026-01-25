@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Script, console} from "forge-std/Script.sol";
-import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {StrategyKeeper, IStrategyKeeper} from "@src/StrategyKeeper.sol";
 import {KeeperCompanion} from "@src/KeeperCompanion.sol";
 import {MainnetStrategyActors} from "@script/Actors.sol";
@@ -78,9 +78,11 @@ contract DeployKeeper is Script {
             )
         );
 
-        ERC1967Proxy proxy = new ERC1967Proxy(address(keeperImplementation), initData);
+        TransparentUpgradeableProxy proxy =
+            new TransparentUpgradeableProxy(address(keeperImplementation), actors.ADMIN(), initData);
         keeper = StrategyKeeper(address(proxy));
         console.log("StrategyKeeper proxy:", address(keeper));
+        console.log("Proxy admin:", actors.ADMIN());
 
         // 4. Deploy KeeperCompanion with keeper as owner
         companion = new KeeperCompanion(address(keeper));

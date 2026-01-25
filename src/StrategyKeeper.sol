@@ -6,7 +6,6 @@ import {
     AccessControlEnumerableUpgradeable
 } from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
-import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
@@ -57,14 +56,13 @@ interface IStrategyKeeper {
 /// @title StrategyKeeper
 /// @notice Upgradeable keeper contract that monitors vault balances, allocates to strategy,
 ///         and disburses funds from the Safe with yield holdback via Sablier streams.
-/// @dev Uses UUPS proxy pattern. Requires PROCESSOR_ROLE on the vault and Safe ownership.
+/// @dev Uses TransparentUpgradeableProxy pattern. Requires PROCESSOR_ROLE on the vault and Safe ownership.
 contract StrategyKeeper is
     IStrategyKeeper,
     IERC1271,
     Initializable,
     AccessControlEnumerableUpgradeable,
-    ReentrancyGuardUpgradeable,
-    UUPSUpgradeable
+    ReentrancyGuardUpgradeable
 {
     using SafeERC20 for IERC20;
 
@@ -113,7 +111,6 @@ contract StrategyKeeper is
 
         __AccessControlEnumerable_init();
         __ReentrancyGuard_init();
-        __UUPSUpgradeable_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(CONFIG_MANAGER_ROLE, admin);
@@ -397,10 +394,6 @@ contract StrategyKeeper is
     function getConfig() external view returns (KeeperConfig memory config) {
         return _getKeeperStorage().config;
     }
-
-    /// @notice Authorize upgrade (only admin)
-    /// @param newImplementation New implementation address
-    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 }
 
 /// @notice Minimal interface for vault processor function
