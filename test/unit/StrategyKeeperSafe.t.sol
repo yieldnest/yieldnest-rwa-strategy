@@ -5,6 +5,10 @@ import {Test} from "forge-std/Test.sol";
 import {TransparentUpgradeableProxy} from
     "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {Safe} from "lib/safe-smart-account/contracts/Safe.sol";
+import {SafeProxyFactory} from "lib/safe-smart-account/contracts/proxies/SafeProxyFactory.sol";
+import {SafeProxy} from "lib/safe-smart-account/contracts/proxies/SafeProxy.sol";
+import {Enum} from "lib/safe-smart-account/contracts/libraries/Enum.sol";
 import {StrategyKeeper, IStrategyKeeper} from "src/StrategyKeeper.sol";
 import {KeeperCompanion} from "src/KeeperCompanion.sol";
 import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
@@ -50,173 +54,13 @@ contract MockERC20 is IERC20 {
     }
 }
 
-/// @title MockGnosisSafe
-/// @notice Mock Gnosis Safe that validates ERC-1271 signatures
-contract MockGnosisSafe is IGnosisSafe {
-    mapping(address => bool) public isOwner;
-    address[] public owners;
-    uint256 public threshold;
-    uint256 public nonce;
-    mapping(address => mapping(bytes32 => uint256)) public approvedHashes;
-
-    bytes4 constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
-
-    constructor(address[] memory _owners, uint256 _threshold) {
-        for (uint256 i = 0; i < _owners.length; i++) {
-            isOwner[_owners[i]] = true;
-            owners.push(_owners[i]);
-        }
-        threshold = _threshold;
-    }
-
-    function addOwner(address owner) external {
-        isOwner[owner] = true;
-        owners.push(owner);
-    }
-
-    function getOwners() external view returns (address[] memory) {
-        return owners;
-    }
-
-    function getThreshold() external view returns (uint256) {
-        return threshold;
-    }
-
-    function approveHash(bytes32 hashToApprove) external {
-        approvedHashes[msg.sender][hashToApprove] = 1;
-    }
-
-    function getTransactionHash(
-        address to,
-        uint256 value,
-        bytes calldata data,
-        Operation operation,
-        uint256 safeTxGas,
-        uint256 baseGas,
-        uint256 gasPrice,
-        address gasToken,
-        address refundReceiver,
-        uint256 _nonce
-    ) external view returns (bytes32) {
-        return keccak256(
-            abi.encode(
-                to,
-                value,
-                keccak256(data),
-                operation,
-                safeTxGas,
-                baseGas,
-                gasPrice,
-                gasToken,
-                refundReceiver,
-                _nonce,
-                address(this)
-            )
-        );
-    }
-
-    function execTransaction(
-        address to,
-        uint256 value,
-        bytes calldata data,
-        Operation operation,
-        uint256 safeTxGas,
-        uint256 baseGas,
-        uint256 gasPrice,
-        address gasToken,
-        address payable refundReceiver,
-        bytes memory signatures
-    ) external payable returns (bool success) {
-        // Silence unused variable warnings
-        safeTxGas;
-        baseGas;
-        gasPrice;
-        gasToken;
-        refundReceiver;
-
-        bytes32 txHash = this.getTransactionHash(to, value, data, operation, 0, 0, 0, address(0), address(0), nonce);
-
-        // Validate signatures
-        _checkSignatures(txHash, signatures);
-
-        // Increment nonce
-        nonce++;
-
-        // Execute transaction
-        if (operation == Operation.Call) {
-            (success,) = to.call{value: value}(data);
-        } else {
-            (success,) = to.delegatecall(data);
-        }
-
-        require(success, "Transaction failed");
-        return success;
-    }
-
-    function _checkSignatures(bytes32 dataHash, bytes memory signatures) internal view {
-        uint256 _threshold = threshold;
-        require(_threshold > 0, "Threshold not set");
-        require(signatures.length >= _threshold * 65, "Signatures too short");
-
-        address lastOwner = address(0);
-        address currentOwner;
-
-        for (uint256 i = 0; i < _threshold; i++) {
-            (uint8 v, bytes32 r, bytes32 s) = _signatureSplit(signatures, i);
-
-            if (v == 0) {
-                // Contract signature (ERC-1271)
-                currentOwner = address(uint160(uint256(r)));
-
-                // s contains the offset to signature data
-                // For our implementation, we pass empty signature data
-                // The contract validates via isValidSignature
-
-                require(isOwner[currentOwner], "Not an owner");
-
-                // Call isValidSignature on the contract
-                bytes4 magicValue = IERC1271(currentOwner).isValidSignature(dataHash, "");
-                require(magicValue == ERC1271_MAGIC_VALUE, "Invalid contract signature");
-            } else if (v == 1) {
-                // Approved hash signature
-                currentOwner = address(uint160(uint256(r)));
-                require(isOwner[currentOwner], "Not an owner");
-                require(approvedHashes[currentOwner][dataHash] == 1, "Hash not approved");
-            } else {
-                // ECDSA signature (v = 27 or 28)
-                currentOwner = ecrecover(dataHash, v, r, s);
-                require(isOwner[currentOwner], "Not an owner");
-            }
-
-            // Check owner ordering (prevent duplicates)
-            require(uint160(currentOwner) > uint160(lastOwner), "Invalid owner order");
-            lastOwner = currentOwner;
-        }
-    }
-
-    function _signatureSplit(bytes memory signatures, uint256 pos)
-        internal
-        pure
-        returns (uint8 v, bytes32 r, bytes32 s)
-    {
-        assembly {
-            let signaturePos := mul(0x41, pos)
-            r := mload(add(signatures, add(signaturePos, 0x20)))
-            s := mload(add(signatures, add(signaturePos, 0x40)))
-            v := byte(0, mload(add(signatures, add(signaturePos, 0x60))))
-        }
-    }
-}
-
-interface IERC1271 {
-    function isValidSignature(bytes32 hash, bytes memory signature) external view returns (bytes4);
-}
-
 /// @title StrategyKeeperSafeTest
-/// @notice Tests for StrategyKeeper with a mock Gnosis Safe
+/// @notice Tests for StrategyKeeper with a real Gnosis Safe
 contract StrategyKeeperSafeTest is Test {
     MockERC20 public usdc;
-    MockGnosisSafe public safe;
+    Safe public safe;
+    Safe public safeSingleton;
+    SafeProxyFactory public safeFactory;
     StrategyKeeper public keeper;
     StrategyKeeper public keeperImpl;
     KeeperCompanion public companion;
@@ -230,6 +74,10 @@ contract StrategyKeeperSafeTest is Test {
     address public streamReceiver = address(0x7777);
     address public sablier = address(0x8888);
 
+    // Additional EOA owners for the Safe
+    address public eoaOwner1 = address(0xAAAA);
+    address public eoaOwner2 = address(0xBBBB);
+
     function setUp() public {
         // Deploy mock USDC
         usdc = new MockERC20();
@@ -237,10 +85,7 @@ contract StrategyKeeperSafeTest is Test {
         // Deploy keeper implementation
         keeperImpl = new StrategyKeeper();
 
-        // We need to know keeper and companion addresses before creating Safe
-        // Use CREATE2 or compute addresses
-
-        // For testing, deploy keeper first, then Safe, then add keeper as owner
+        // Deploy keeper proxy with placeholder addresses
         bytes memory initData = abi.encodeCall(
             StrategyKeeper.initialize,
             (
@@ -269,15 +114,36 @@ contract StrategyKeeperSafeTest is Test {
         // Deploy companion with keeper as owner
         companion = new KeeperCompanion(address(keeper));
 
-        // Deploy Safe with keeper and companion as owners (2/4 threshold)
+        // Deploy Safe singleton and factory
+        safeSingleton = new Safe();
+        safeFactory = new SafeProxyFactory();
+
+        // Setup Safe owners (2/4 threshold)
         address[] memory owners = new address[](4);
         owners[0] = address(keeper);
         owners[1] = address(companion);
-        owners[2] = address(0xAAAA);
-        owners[3] = address(0xBBBB);
+        owners[2] = eoaOwner1;
+        owners[3] = eoaOwner2;
         _sortAddresses(owners);
 
-        safe = new MockGnosisSafe(owners, 2);
+        // Build Safe setup call
+        bytes memory safeSetupData = abi.encodeCall(
+            Safe.setup,
+            (
+                owners,
+                2, // threshold
+                address(0), // to (no delegate call)
+                "", // data
+                address(0), // fallbackHandler
+                address(0), // paymentToken
+                0, // payment
+                payable(address(0)) // paymentReceiver
+            )
+        );
+
+        // Deploy Safe proxy using factory
+        SafeProxy safeProxy = safeFactory.createProxyWithNonce(address(safeSingleton), safeSetupData, 0);
+        safe = Safe(payable(address(safeProxy)));
 
         // Update keeper config with correct addresses
         vm.startPrank(admin);
@@ -322,6 +188,7 @@ contract StrategyKeeperSafeTest is Test {
         assertTrue(safe.isOwner(address(keeper)), "Keeper should be owner");
         assertTrue(safe.isOwner(address(companion)), "Companion should be owner");
         assertEq(safe.getThreshold(), 2, "Threshold should be 2");
+        assertEq(safe.getOwners().length, 4, "Should have 4 owners");
     }
 
     /// @notice Test ERC-1271 signature validation on keeper
@@ -361,9 +228,9 @@ contract StrategyKeeperSafeTest is Test {
         // Build transfer call
         bytes memory transferData = abi.encodeCall(IERC20.transfer, (recipient, transferAmount));
 
-        // Get transaction hash
+        // Get transaction hash using Safe's method
         bytes32 txHash = safe.getTransactionHash(
-            address(usdc), 0, transferData, IGnosisSafe.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
+            address(usdc), 0, transferData, Enum.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
         );
 
         // Approve hash on companion
@@ -382,7 +249,7 @@ contract StrategyKeeperSafeTest is Test {
 
         // Execute transaction
         bool success = safe.execTransaction(
-            address(usdc), 0, transferData, IGnosisSafe.Operation.Call, 0, 0, 0, address(0), payable(0), signatures
+            address(usdc), 0, transferData, Enum.Operation.Call, 0, 0, 0, address(0), payable(0), signatures
         );
 
         assertTrue(success, "Transaction should succeed");
@@ -393,14 +260,14 @@ contract StrategyKeeperSafeTest is Test {
     /// @notice Test multiple Safe transactions in sequence
     function test_multipleSafeTransactions() public {
         address recipient1 = address(0xCAFE);
-        address recipient2 = address(0xBEEF);
+        address recipient2 = address(0xDEAD);
         uint256 amount1 = 500e6;
         uint256 amount2 = 300e6;
 
         // First transaction
         bytes memory transferData1 = abi.encodeCall(IERC20.transfer, (recipient1, amount1));
         bytes32 txHash1 = safe.getTransactionHash(
-            address(usdc), 0, transferData1, IGnosisSafe.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
+            address(usdc), 0, transferData1, Enum.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
         );
 
         vm.prank(address(keeper));
@@ -414,14 +281,14 @@ contract StrategyKeeperSafeTest is Test {
 
         bytes memory signatures1 = _buildContractSignatures(address(keeper), address(companion));
         bool success1 = safe.execTransaction(
-            address(usdc), 0, transferData1, IGnosisSafe.Operation.Call, 0, 0, 0, address(0), payable(0), signatures1
+            address(usdc), 0, transferData1, Enum.Operation.Call, 0, 0, 0, address(0), payable(0), signatures1
         );
         assertTrue(success1, "First transaction should succeed");
 
         // Second transaction (nonce incremented)
         bytes memory transferData2 = abi.encodeCall(IERC20.transfer, (recipient2, amount2));
         bytes32 txHash2 = safe.getTransactionHash(
-            address(usdc), 0, transferData2, IGnosisSafe.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
+            address(usdc), 0, transferData2, Enum.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
         );
 
         vm.prank(address(keeper));
@@ -435,7 +302,7 @@ contract StrategyKeeperSafeTest is Test {
 
         bytes memory signatures2 = _buildContractSignatures(address(keeper), address(companion));
         bool success2 = safe.execTransaction(
-            address(usdc), 0, transferData2, IGnosisSafe.Operation.Call, 0, 0, 0, address(0), payable(0), signatures2
+            address(usdc), 0, transferData2, Enum.Operation.Call, 0, 0, 0, address(0), payable(0), signatures2
         );
         assertTrue(success2, "Second transaction should succeed");
 
@@ -448,7 +315,7 @@ contract StrategyKeeperSafeTest is Test {
     function test_revertOnUnapprovedSignature() public {
         bytes memory transferData = abi.encodeCall(IERC20.transfer, (address(0xCAFE), 100e6));
         bytes32 txHash = safe.getTransactionHash(
-            address(usdc), 0, transferData, IGnosisSafe.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
+            address(usdc), 0, transferData, Enum.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
         );
 
         // Don't approve on companion, but mock keeper approval
@@ -461,9 +328,9 @@ contract StrategyKeeperSafeTest is Test {
         bytes memory signatures = _buildContractSignatures(address(keeper), address(companion));
 
         // Should fail because companion hasn't approved
-        vm.expectRevert("Invalid contract signature");
+        vm.expectRevert();
         safe.execTransaction(
-            address(usdc), 0, transferData, IGnosisSafe.Operation.Call, 0, 0, 0, address(0), payable(0), signatures
+            address(usdc), 0, transferData, Enum.Operation.Call, 0, 0, 0, address(0), payable(0), signatures
         );
     }
 
