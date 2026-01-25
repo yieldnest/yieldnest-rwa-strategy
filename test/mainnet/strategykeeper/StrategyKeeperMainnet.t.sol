@@ -292,7 +292,9 @@ contract StrategyKeeperMainnetTest is Test {
         vm.prank(address(keeper));
         companion.approveHash(testHash);
 
-        assertEq(companion.isValidSignature(testHash, ""), bytes4(0x1626ba7e), "approved hash should return magic value");
+        assertEq(
+            companion.isValidSignature(testHash, ""), bytes4(0x1626ba7e), "approved hash should return magic value"
+        );
     }
 
     function test_configValidation_zeroVault() public {
@@ -427,7 +429,9 @@ contract StrategyKeeperMainnetTest is Test {
 
         // Even with 24h passed, vault balance is below minProcessingPercent of totalAssets
         vm.warp(block.timestamp + 24 hours);
-        assertFalse(keeper.shouldProcess(), "shouldProcess should be false when vault balance below minProcessingPercent");
+        assertFalse(
+            keeper.shouldProcess(), "shouldProcess should be false when vault balance below minProcessingPercent"
+        );
     }
 
     function test_shouldProcess_vaultAboveThreshold() public {
@@ -474,9 +478,13 @@ contract StrategyKeeperMainnetTest is Test {
         // Now lastProcessedTimestamp is set to current block.timestamp
         assertEq(keeper.lastProcessedTimestamp(), block.timestamp, "lastProcessedTimestamp should be set");
 
-        // Reset safe balance
+        // Reset vault balance to 2% of vault totalAssets by transferring from USDC_WHALE to the vault
+        (bool success, bytes memory data) = VAULT.call(abi.encodeWithSignature("totalAssets()"));
+        require(success, "totalAssets() call failed");
+        uint256 totalAssets = abi.decode(data, (uint256));
+        uint256 twoPercent = totalAssets * 2 / 100;
         vm.prank(USDC_WHALE);
-        IERC20(USDC).transfer(address(safe), 100_000e6);
+        IERC20(USDC).transfer(VAULT, twoPercent);
 
         // Should be false immediately after processing (24h hasn't passed)
         assertFalse(keeper.shouldProcess(), "shouldProcess should be false before 24h");
@@ -551,7 +559,9 @@ contract StrategyKeeperMainnetTest is Test {
         vm.prank(keeperBot);
         keeper.processInflows();
 
-        assertEq(keeper.lastProcessedTimestamp(), expectedTimestamp, "lastProcessedTimestamp should be updated after process");
+        assertEq(
+            keeper.lastProcessedTimestamp(), expectedTimestamp, "lastProcessedTimestamp should be updated after process"
+        );
     }
 
     function test_configValidation_minProcessingPercentTooHigh() public {
