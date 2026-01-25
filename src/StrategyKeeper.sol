@@ -73,8 +73,14 @@ contract StrategyKeeper is
     /// @notice Role required to update configuration
     bytes32 public constant CONFIG_MANAGER_ROLE = keccak256("CONFIG_MANAGER_ROLE");
 
-    /// @notice ERC-1271 magic value for valid signature
+    /// @notice ERC-1271 magic value for isValidSignature(bytes32,bytes)
     bytes4 internal constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
+
+    /// @notice Legacy magic value for isValidSignature(bytes,bytes) - Safe 1.4.1 compatibility
+    bytes4 internal constant LEGACY_MAGIC_VALUE = 0x20c13b0b;
+
+    /// @notice Invalid signature value
+    bytes4 internal constant INVALID_SIGNATURE = 0xffffffff;
 
     /// @notice Precision for percentage calculations (1e18 = 100%)
     uint256 public constant PRECISION = 1e18;
@@ -404,7 +410,7 @@ contract StrategyKeeper is
     /// @notice ERC-1271 signature validation for this contract
     /// @param hash The hash to validate
     /// @param signature The signature (unused)
-    /// @return magicValue ERC1271_MAGIC_VALUE if approved, 0xffffffff otherwise
+    /// @return magicValue ERC1271_MAGIC_VALUE if approved, INVALID_SIGNATURE otherwise
     function isValidSignature(bytes32 hash, bytes calldata signature)
         external
         view
@@ -416,7 +422,26 @@ contract StrategyKeeper is
         if (_getKeeperStorage().approvedHashes[hash]) {
             return ERC1271_MAGIC_VALUE;
         }
-        return 0xffffffff;
+        return INVALID_SIGNATURE;
+    }
+
+    /// @notice Legacy signature validation (Safe 1.4.1 compatibility)
+    /// @dev Safe 1.4.1 uses isValidSignature(bytes,bytes) with selector 0x20c13b0b
+    /// @param data The EIP-712 encoded message data
+    /// @param signature The signature (unused)
+    /// @return magicValue LEGACY_MAGIC_VALUE if approved, INVALID_SIGNATURE otherwise
+    function isValidSignature(bytes calldata data, bytes calldata signature)
+        external
+        view
+        returns (bytes4 magicValue)
+    {
+        signature; // Silence unused variable warning
+
+        bytes32 hash = keccak256(data);
+        if (_getKeeperStorage().approvedHashes[hash]) {
+            return LEGACY_MAGIC_VALUE;
+        }
+        return INVALID_SIGNATURE;
     }
 
     /// @notice Update the keeper configuration

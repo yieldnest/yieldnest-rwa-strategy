@@ -57,6 +57,9 @@ contract MockERC20 is IERC20 {
 /// @title StrategyKeeperSafeTest
 /// @notice Tests for StrategyKeeper with a real Gnosis Safe
 contract StrategyKeeperSafeTest is Test {
+    /// @notice ERC-1271 magic value for isValidSignature(bytes32,bytes)
+    bytes4 internal constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
+
     MockERC20 public usdc;
     Safe public safe;
     Safe public safeSingleton;
@@ -216,7 +219,7 @@ contract StrategyKeeperSafeTest is Test {
 
         // Now should be valid
         result = companion.isValidSignature(testHash, "");
-        assertEq(result, bytes4(0x1626ba7e), "Should be valid after approval");
+        assertEq(result, ERC1271_MAGIC_VALUE, "Should be valid after approval");
     }
 
     /// @notice Test executing a Safe transaction with contract signatures
@@ -239,11 +242,9 @@ contract StrategyKeeperSafeTest is Test {
         vm.prank(address(keeper));
         companion.approveHash(txHash);
 
-        // Mock keeper's isValidSignature to return magic value
+        // Mock keeper's isValidSignature (bytes32, bytes) to return magic value
         vm.mockCall(
-            address(keeper),
-            abi.encodeWithSelector(keeper.isValidSignature.selector, txHash, ""),
-            abi.encode(bytes4(0x1626ba7e))
+            address(keeper), abi.encodeWithSelector(ERC1271_MAGIC_VALUE, txHash, ""), abi.encode(ERC1271_MAGIC_VALUE)
         );
 
         // Build contract signatures for keeper and companion
@@ -276,9 +277,7 @@ contract StrategyKeeperSafeTest is Test {
         companion.approveHash(txHash1);
 
         vm.mockCall(
-            address(keeper),
-            abi.encodeWithSelector(keeper.isValidSignature.selector, txHash1, ""),
-            abi.encode(bytes4(0x1626ba7e))
+            address(keeper), abi.encodeWithSelector(ERC1271_MAGIC_VALUE, txHash1, ""), abi.encode(ERC1271_MAGIC_VALUE)
         );
 
         bytes memory signatures1 = _buildContractSignatures(address(keeper), address(companion));
@@ -297,9 +296,7 @@ contract StrategyKeeperSafeTest is Test {
         companion.approveHash(txHash2);
 
         vm.mockCall(
-            address(keeper),
-            abi.encodeWithSelector(keeper.isValidSignature.selector, txHash2, ""),
-            abi.encode(bytes4(0x1626ba7e))
+            address(keeper), abi.encodeWithSelector(ERC1271_MAGIC_VALUE, txHash2, ""), abi.encode(ERC1271_MAGIC_VALUE)
         );
 
         bytes memory signatures2 = _buildContractSignatures(address(keeper), address(companion));
@@ -322,9 +319,7 @@ contract StrategyKeeperSafeTest is Test {
 
         // Don't approve on companion, but mock keeper approval
         vm.mockCall(
-            address(keeper),
-            abi.encodeWithSelector(keeper.isValidSignature.selector, txHash, ""),
-            abi.encode(bytes4(0x1626ba7e))
+            address(keeper), abi.encodeWithSelector(ERC1271_MAGIC_VALUE, txHash, ""), abi.encode(ERC1271_MAGIC_VALUE)
         );
 
         bytes memory signatures = _buildContractSignatures(address(keeper), address(companion));

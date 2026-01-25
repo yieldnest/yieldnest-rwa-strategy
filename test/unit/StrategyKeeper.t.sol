@@ -8,6 +8,9 @@ import {StrategyKeeper, IStrategyKeeper} from "src/StrategyKeeper.sol";
 import {KeeperCompanion, IKeeperCompanion} from "src/KeeperCompanion.sol";
 
 contract StrategyKeeperTest is Test {
+    /// @notice ERC-1271 magic value for isValidSignature(bytes32,bytes)
+    bytes4 internal constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
+
     StrategyKeeper public keeper;
     StrategyKeeper public keeperImpl;
     KeeperCompanion public companion;
@@ -274,6 +277,9 @@ contract StrategyKeeperTest is Test {
 }
 
 contract KeeperCompanionTest is Test {
+    /// @notice ERC-1271 magic value for isValidSignature(bytes32,bytes)
+    bytes4 internal constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
+
     KeeperCompanion public companion;
     address public keeper = address(0x1);
     address public other = address(0x2);
@@ -321,7 +327,7 @@ contract KeeperCompanionTest is Test {
         companion.approveHash(hash);
 
         result = companion.isValidSignature(hash, "");
-        assertEq(result, bytes4(0x1626ba7e)); // MAGIC_VALUE
+        assertEq(result, ERC1271_MAGIC_VALUE, "approved hash should return ERC1271_MAGIC_VALUE");
     }
 
     function test_revertOnUnauthorizedApprove() public {

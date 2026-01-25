@@ -8,7 +8,6 @@ import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.so
 import {Safe} from "lib/safe-smart-account/contracts/Safe.sol";
 import {SafeProxyFactory} from "lib/safe-smart-account/contracts/proxies/SafeProxyFactory.sol";
 import {SafeProxy} from "lib/safe-smart-account/contracts/proxies/SafeProxy.sol";
-import {Enum} from "lib/safe-smart-account/contracts/libraries/Enum.sol";
 import {IAccessControl} from "lib/openzeppelin-contracts/contracts/access/IAccessControl.sol";
 import {StrategyKeeper, IStrategyKeeper} from "src/StrategyKeeper.sol";
 import {KeeperCompanion} from "src/KeeperCompanion.sol";
@@ -21,6 +20,12 @@ interface IVaultRoles is IAccessControl {
 /// @notice Integration tests for StrategyKeeper with mainnet fork
 /// @dev Run with: forge test --match-path "test/mainnet/strategykeeper/*.sol" --fork-url <RPC_URL>
 contract StrategyKeeperMainnetTest is Test {
+    /// @notice ERC-1271 magic value for isValidSignature(bytes32,bytes)
+    bytes4 internal constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
+
+    /// @notice Invalid signature value
+    bytes4 internal constant INVALID_SIGNATURE = 0xffffffff;
+
     // Mainnet addresses
     address constant VAULT = 0x01Ba69727E2860b37bc1a2bd56999c1aFb4C15D8; // ynRWAx
     address constant TARGET_STRATEGY = 0xF6e1443e3F70724cec8C0a779C7C35A8DcDA928B;
@@ -237,39 +242,6 @@ contract StrategyKeeperMainnetTest is Test {
         keeper.setConfig(cfg);
     }
 
-    function test_safeTransferWithContractSignatures() public {
-        uint256 amount = 1000e6;
-        address recipient = makeAddr("recipient");
-
-        uint256 recipientBefore = IERC20(USDC).balanceOf(recipient);
-        uint256 safeBefore = IERC20(USDC).balanceOf(address(safe));
-
-        bytes memory transferData = abi.encodeCall(IERC20.transfer, (recipient, amount));
-        bytes32 txHash = safe.getTransactionHash(
-            USDC, 0, transferData, Enum.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
-        );
-
-        // Approve hash on companion
-        vm.prank(address(keeper));
-        companion.approveHash(txHash);
-
-        // Build contract signatures
-        bytes memory signatures = _buildContractSignatures(address(keeper), address(companion));
-
-        // Mock isValidSignature for both keeper and companion
-        // Safe 1.4.1 uses legacy bytes format: isValidSignature(bytes,bytes) -> 0x20c13b0b
-        vm.mockCall(address(keeper), abi.encodeWithSelector(bytes4(0x20c13b0b)), abi.encode(bytes4(0x20c13b0b)));
-        vm.mockCall(address(companion), abi.encodeWithSelector(bytes4(0x20c13b0b)), abi.encode(bytes4(0x20c13b0b)));
-
-        bool success = safe.execTransaction(
-            USDC, 0, transferData, Enum.Operation.Call, 0, 0, 0, address(0), payable(0), signatures
-        );
-
-        assertTrue(success, "safe transaction should succeed");
-        assertEq(IERC20(USDC).balanceOf(recipient), recipientBefore + amount, "recipient should receive amount");
-        assertEq(IERC20(USDC).balanceOf(address(safe)), safeBefore - amount, "safe balance should decrease by amount");
-    }
-
     function test_companionHashApproval() public {
         bytes32 testHash = keccak256("test");
 
@@ -287,13 +259,13 @@ contract StrategyKeeperMainnetTest is Test {
     function test_companionIsValidSignature() public {
         bytes32 testHash = keccak256("test");
 
-        assertEq(companion.isValidSignature(testHash, ""), bytes4(0xffffffff), "unapproved hash should return invalid");
+        assertEq(companion.isValidSignature(testHash, ""), INVALID_SIGNATURE, "unapproved hash should return invalid");
 
         vm.prank(address(keeper));
         companion.approveHash(testHash);
 
         assertEq(
-            companion.isValidSignature(testHash, ""), bytes4(0x1626ba7e), "approved hash should return magic value"
+            companion.isValidSignature(testHash, ""), ERC1271_MAGIC_VALUE, "approved hash should return magic value"
         );
     }
 
@@ -347,11 +319,6 @@ contract StrategyKeeperMainnetTest is Test {
         uint256 principal = available - interest;
         uint256 fee = interest / 11;
         uint256 streamAmount = interest - fee;
-
-        // Mock isValidSignature for both keeper and companion
-        // Safe 1.4.1 uses legacy bytes format: isValidSignature(bytes,bytes) -> 0x20c13b0b
-        vm.mockCall(address(keeper), abi.encodeWithSelector(bytes4(0x20c13b0b)), abi.encode(bytes4(0x20c13b0b)));
-        vm.mockCall(address(companion), abi.encodeWithSelector(bytes4(0x20c13b0b)), abi.encode(bytes4(0x20c13b0b)));
 
         // Execute processInflows
         vm.prank(keeperBot);
@@ -465,13 +432,7 @@ contract StrategyKeeperMainnetTest is Test {
             })
         );
 
-        // Initially should return false (lastProcessedTimestamp is 0, but we need 24h to pass)
-        // Actually with lastProcessedTimestamp=0, block.timestamp >= 0 + 24h is true
-        // So we need to check if available >= minAmount
-        // available = 99_000e6, vault totalAssets check
-        // Let's first do a process to set timestamp
-        vm.mockCall(address(keeper), abi.encodeWithSelector(bytes4(0x20c13b0b)), abi.encode(bytes4(0x20c13b0b)));
-        vm.mockCall(address(companion), abi.encodeWithSelector(bytes4(0x20c13b0b)), abi.encode(bytes4(0x20c13b0b)));
+        // Let's first do a process to set lastProcessedTimestamp
         vm.prank(keeperBot);
         keeper.processInflows();
 
@@ -552,9 +513,6 @@ contract StrategyKeeperMainnetTest is Test {
             })
         );
 
-        vm.mockCall(address(keeper), abi.encodeWithSelector(bytes4(0x20c13b0b)), abi.encode(bytes4(0x20c13b0b)));
-        vm.mockCall(address(companion), abi.encodeWithSelector(bytes4(0x20c13b0b)), abi.encode(bytes4(0x20c13b0b)));
-
         uint256 expectedTimestamp = block.timestamp;
         vm.prank(keeperBot);
         keeper.processInflows();
@@ -571,21 +529,5 @@ contract StrategyKeeperMainnetTest is Test {
         vm.prank(admin);
         vm.expectRevert(IStrategyKeeper.InvalidConfiguration.selector);
         keeper.setConfig(cfg);
-    }
-
-    function _buildContractSignatures(address signer1, address signer2) internal pure returns (bytes memory) {
-        address lower = uint160(signer1) < uint160(signer2) ? signer1 : signer2;
-        address higher = uint160(signer1) < uint160(signer2) ? signer2 : signer1;
-
-        return abi.encodePacked(
-            bytes32(uint256(uint160(lower))),
-            bytes32(uint256(130)),
-            uint8(0),
-            bytes32(uint256(uint160(higher))),
-            bytes32(uint256(162)),
-            uint8(0),
-            bytes32(0),
-            bytes32(0)
-        );
     }
 }

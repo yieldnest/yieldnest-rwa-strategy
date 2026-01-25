@@ -28,10 +28,13 @@ interface IKeeperCompanion is IERC1271 {
 ///         two contract signatures (StrategyKeeper + KeeperCompanion).
 /// @dev This contract must be added as an owner on the Gnosis Safe.
 contract KeeperCompanion is IKeeperCompanion, Ownable {
-    /// @notice ERC-1271 magic value returned on successful signature validation
-    bytes4 internal constant MAGIC_VALUE = 0x1626ba7e;
+    /// @notice ERC-1271 magic value for isValidSignature(bytes32,bytes)
+    bytes4 internal constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
 
-    /// @notice ERC-1271 failure value
+    /// @notice Legacy magic value for isValidSignature(bytes,bytes) - Safe 1.4.1 compatibility
+    bytes4 internal constant LEGACY_MAGIC_VALUE = 0x20c13b0b;
+
+    /// @notice Invalid signature value
     bytes4 internal constant INVALID_SIGNATURE = 0xffffffff;
 
     /// @notice Mapping of approved hashes
@@ -86,7 +89,26 @@ contract KeeperCompanion is IKeeperCompanion, Ownable {
         signature;
 
         if (_approvedHashes[hash]) {
-            return MAGIC_VALUE;
+            return ERC1271_MAGIC_VALUE;
+        }
+        return INVALID_SIGNATURE;
+    }
+
+    /// @notice Legacy signature validation (Safe 1.4.1 compatibility)
+    /// @dev Safe 1.4.1 uses isValidSignature(bytes,bytes) with selector 0x20c13b0b
+    /// @param data The EIP-712 encoded message data
+    /// @param signature The signature (unused)
+    /// @return magicValue LEGACY_MAGIC_VALUE if approved, INVALID_SIGNATURE otherwise
+    function isValidSignature(bytes calldata data, bytes calldata signature)
+        external
+        view
+        returns (bytes4 magicValue)
+    {
+        signature; // Silence unused variable warning
+
+        bytes32 hash = keccak256(data);
+        if (_approvedHashes[hash]) {
+            return LEGACY_MAGIC_VALUE;
         }
         return INVALID_SIGNATURE;
     }
