@@ -99,7 +99,17 @@ contract MockGnosisSafe is IGnosisSafe {
     ) external view returns (bytes32) {
         return keccak256(
             abi.encode(
-                to, value, keccak256(data), operation, safeTxGas, baseGas, gasPrice, gasToken, refundReceiver, _nonce, address(this)
+                to,
+                value,
+                keccak256(data),
+                operation,
+                safeTxGas,
+                baseGas,
+                gasPrice,
+                gasToken,
+                refundReceiver,
+                _nonce,
+                address(this)
             )
         );
     }
@@ -352,16 +362,7 @@ contract StrategyKeeperSafeTest is Test {
 
         // Get transaction hash
         bytes32 txHash = safe.getTransactionHash(
-            address(usdc),
-            0,
-            transferData,
-            IGnosisSafe.Operation.Call,
-            0,
-            0,
-            0,
-            address(0),
-            address(0),
-            safe.nonce()
+            address(usdc), 0, transferData, IGnosisSafe.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
         );
 
         // Approve hash on companion
@@ -380,29 +381,12 @@ contract StrategyKeeperSafeTest is Test {
 
         // Execute transaction
         bool success = safe.execTransaction(
-            address(usdc),
-            0,
-            transferData,
-            IGnosisSafe.Operation.Call,
-            0,
-            0,
-            0,
-            address(0),
-            payable(0),
-            signatures
+            address(usdc), 0, transferData, IGnosisSafe.Operation.Call, 0, 0, 0, address(0), payable(0), signatures
         );
 
         assertTrue(success, "Transaction should succeed");
-        assertEq(
-            usdc.balanceOf(recipient),
-            recipientBalanceBefore + transferAmount,
-            "Recipient should receive tokens"
-        );
-        assertEq(
-            usdc.balanceOf(address(safe)),
-            safeBalanceBefore - transferAmount,
-            "Safe balance should decrease"
-        );
+        assertEq(usdc.balanceOf(recipient), recipientBalanceBefore + transferAmount, "Recipient should receive tokens");
+        assertEq(usdc.balanceOf(address(safe)), safeBalanceBefore - transferAmount, "Safe balance should decrease");
     }
 
     /// @notice Test multiple Safe transactions in sequence
