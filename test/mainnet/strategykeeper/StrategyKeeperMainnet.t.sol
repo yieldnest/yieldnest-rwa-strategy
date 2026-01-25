@@ -22,7 +22,7 @@ contract StrategyKeeperMainnetTest is Test {
     address constant FEE_WALLET = 0xC92Dd1837EBcb0365eB0a8795f9c8E474f8B6183;
     address constant BORROWER = 0xaa7f79Bb105833D655D1C13C175142c44e209912;
     address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
-    address constant SABLIER = 0x3962f6585946823440d274aD7C719B02b49DE51E;
+    address constant SABLIER = 0xcF8ce57fa442ba50aCbC57147a62aD03873FfA73;
 
     // Mainnet Safe infrastructure
     address constant SAFE_SINGLETON = 0x41675C099F32341bf84BFc5382aF534df5C7461a;
@@ -316,6 +316,97 @@ contract StrategyKeeperMainnetTest is Test {
         vm.prank(admin);
         vm.expectRevert(IStrategyKeeper.InvalidConfiguration.selector);
         keeper.setConfig(cfg);
+    }
+
+    function test_processInflows_success() public {
+        // Update config to set minThreshold very high so vault allocation is skipped
+        // (we don't have PROCESSOR_ROLE on the real vault)
+        vm.startPrank(admin);
+        keeper.setConfig(
+            IStrategyKeeper.KeeperConfig({
+                vault: VAULT,
+                targetStrategy: TARGET_STRATEGY,
+                safe: address(safe),
+                companion: address(companion),
+                baseAsset: USDC,
+                borrower: BORROWER,
+                feeWallet: FEE_WALLET,
+                streamReceiver: streamReceiver,
+                sablier: SABLIER,
+                minThreshold: type(uint256).max, // Set very high to skip vault allocation
+                minResidual: 1_000e6,
+                apr: 0.121e18,
+                holdingDays: 28
+            })
+        );
+        vm.stopPrank();
+
+        // Get initial balances
+        uint256 safeBalanceBefore = IERC20(USDC).balanceOf(address(safe));
+        uint256 borrowerBalanceBefore = IERC20(USDC).balanceOf(BORROWER);
+        uint256 feeWalletBalanceBefore = IERC20(USDC).balanceOf(FEE_WALLET);
+        uint256 sablierBalanceBefore = IERC20(USDC).balanceOf(SABLIER);
+
+        // Calculate expected amounts
+        IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
+        uint256 available = safeBalanceBefore - cfg.minResidual;
+        uint256 interest = (available * cfg.apr * cfg.holdingDays) / 365 / 1e18;
+        uint256 principal = available - interest;
+        uint256 fee = interest / 11;
+        uint256 streamAmount = interest - fee;
+
+        // Mock isValidSignature for both keeper and companion
+        // Safe 1.4.1 uses legacy bytes format: isValidSignature(bytes,bytes) -> 0x20c13b0b
+        vm.mockCall(address(keeper), abi.encodeWithSelector(bytes4(0x20c13b0b)), abi.encode(bytes4(0x20c13b0b)));
+        vm.mockCall(address(companion), abi.encodeWithSelector(bytes4(0x20c13b0b)), abi.encode(bytes4(0x20c13b0b)));
+
+        // Execute processInflows
+        vm.prank(keeperBot);
+        keeper.processInflows();
+
+        // Assert borrower received principal
+        assertEq(
+            IERC20(USDC).balanceOf(BORROWER), borrowerBalanceBefore + principal, "Borrower should receive principal"
+        );
+
+        // Assert fee wallet received fee
+        assertEq(IERC20(USDC).balanceOf(FEE_WALLET), feeWalletBalanceBefore + fee, "Fee wallet should receive fee");
+
+        // Assert safe balance decreased correctly (principal + fee + streamAmount)
+        assertEq(IERC20(USDC).balanceOf(address(safe)), cfg.minResidual, "Safe should only have minResidual left");
+
+        // Assert stream was created (Sablier balance increased by streamAmount)
+        assertEq(
+            IERC20(USDC).balanceOf(SABLIER), sablierBalanceBefore + streamAmount, "Sablier should hold stream amount"
+        );
+    }
+
+    function test_processInflows_noFundsToProcess() public {
+        // Update config to set minThreshold very high so vault allocation is skipped
+        vm.startPrank(admin);
+        keeper.setConfig(
+            IStrategyKeeper.KeeperConfig({
+                vault: VAULT,
+                targetStrategy: TARGET_STRATEGY,
+                safe: address(safe),
+                companion: address(companion),
+                baseAsset: USDC,
+                borrower: BORROWER,
+                feeWallet: FEE_WALLET,
+                streamReceiver: streamReceiver,
+                sablier: SABLIER,
+                minThreshold: type(uint256).max, // Skip vault allocation
+                minResidual: 100_000e6, // Set minResidual equal to safe balance
+                apr: 0.121e18,
+                holdingDays: 28
+            })
+        );
+        vm.stopPrank();
+
+        // Now safe balance (100_000e6) equals minResidual, so no funds to process
+        vm.prank(keeperBot);
+        vm.expectRevert(IStrategyKeeper.NoFundsToProcess.selector);
+        keeper.processInflows();
     }
 
     function _buildContractSignatures(address signer1, address signer2) internal pure returns (bytes memory) {

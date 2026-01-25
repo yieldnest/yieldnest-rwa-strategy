@@ -223,10 +223,11 @@ contract StrategyKeeper is
         // Create stream via Safe
         bytes memory createData =
             abi.encodeCall(ISablierLockupLinear.createWithTimestampsLL, (params, unlockAmounts, 0));
-        bytes memory returnData = _executeSafeTransaction(cfg, cfg.sablier, 0, createData);
+        _executeSafeTransaction(cfg, cfg.sablier, 0, createData);
 
-        // Decode stream ID from return data
-        streamId = abi.decode(returnData, (uint256));
+        // Note: Safe's execTransaction returns bool, not the inner call's return data
+        // Stream ID can be retrieved from events if needed
+        streamId = 0;
     }
 
     /// @notice Execute a transaction from the Gnosis Safe with contract signatures
