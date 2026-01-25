@@ -9,8 +9,13 @@ import {Safe} from "lib/safe-smart-account/contracts/Safe.sol";
 import {SafeProxyFactory} from "lib/safe-smart-account/contracts/proxies/SafeProxyFactory.sol";
 import {SafeProxy} from "lib/safe-smart-account/contracts/proxies/SafeProxy.sol";
 import {Enum} from "lib/safe-smart-account/contracts/libraries/Enum.sol";
+import {IAccessControl} from "lib/openzeppelin-contracts/contracts/access/IAccessControl.sol";
 import {StrategyKeeper, IStrategyKeeper} from "src/StrategyKeeper.sol";
 import {KeeperCompanion} from "src/KeeperCompanion.sol";
+
+interface IVaultRoles is IAccessControl {
+    function PROCESSOR_ROLE() external view returns (bytes32);
+}
 
 /// @title StrategyKeeperMainnetTest
 /// @notice Integration tests for StrategyKeeper with mainnet fork
@@ -109,6 +114,11 @@ contract StrategyKeeperMainnetTest is Test {
         // Fund safe with USDC from whale
         vm.prank(USDC_WHALE);
         IERC20(USDC).transfer(address(safe), 100_000e6);
+
+        // Grant PROCESSOR_ROLE to keeper on the vault
+        bytes32 processorRole = IVaultRoles(VAULT).PROCESSOR_ROLE();
+        vm.prank(0xfcad670592a3b24869C0b51a6c6FDED4F95D6975);
+        IVaultRoles(VAULT).grantRole(processorRole, address(keeper));
     }
 
     function _deploySafe() internal returns (Safe) {
@@ -322,29 +332,6 @@ contract StrategyKeeperMainnetTest is Test {
     }
 
     function test_processInflows_success() public {
-        // Update config to set minThreshold very high so vault allocation is skipped
-        // (we don't have PROCESSOR_ROLE on the real vault)
-        vm.startPrank(admin);
-        keeper.setConfig(
-            IStrategyKeeper.KeeperConfig({
-                vault: VAULT,
-                targetStrategy: TARGET_STRATEGY,
-                safe: address(safe),
-                companion: address(companion),
-                baseAsset: USDC,
-                borrower: BORROWER,
-                feeWallet: FEE_WALLET,
-                streamReceiver: streamReceiver,
-                sablier: SABLIER,
-                minThreshold: type(uint256).max, // Set very high to skip vault allocation
-                minResidual: 1_000e6,
-                apr: 0.121e18,
-                holdingDays: 28,
-                minProcessingPercent: 0.01e18
-            })
-        );
-        vm.stopPrank();
-
         // Get initial balances
         uint256 safeBalanceBefore = IERC20(USDC).balanceOf(address(safe));
         uint256 borrowerBalanceBefore = IERC20(USDC).balanceOf(BORROWER);
@@ -416,6 +403,7 @@ contract StrategyKeeperMainnetTest is Test {
 
     function test_shouldProcess_noFundsAvailable() public {
         // Set minResidual equal to safe balance AND minThreshold very high
+        // AND minProcessingPercent high enough that vault balance is below minAmount
         // so neither condition triggers
         vm.prank(admin);
         keeper.setConfig(
@@ -429,15 +417,15 @@ contract StrategyKeeperMainnetTest is Test {
                 feeWallet: FEE_WALLET,
                 streamReceiver: streamReceiver,
                 sablier: SABLIER,
-                minThreshold: type(uint256).max, // Skip vault condition
+                minThreshold: type(uint256).max, // Skip vault threshold condition
                 minResidual: 100_000e6, // Equal to safe balance
                 apr: 0.121e18,
                 holdingDays: 28,
-                minProcessingPercent: 0.01e18
+                minProcessingPercent: 0.5e18 // 50% - vault balance (77K) < 50% of totalAssets (~1.77M) = ~885K
             })
         );
 
-        // Even with 24h passed, no funds available in safe above minResidual
+        // Even with 24h passed, vault balance is below minProcessingPercent of totalAssets
         vm.warp(block.timestamp + 24 hours);
         assertFalse(keeper.shouldProcess());
     }
