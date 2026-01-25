@@ -153,59 +153,59 @@ contract StrategyKeeperMainnetTest is Test {
     function test_initialization() public view {
         IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
 
-        assertEq(cfg.vault, VAULT);
-        assertEq(cfg.targetStrategy, TARGET_STRATEGY);
-        assertEq(cfg.safe, address(safe));
-        assertEq(cfg.companion, address(companion));
-        assertEq(cfg.baseAsset, USDC);
-        assertEq(cfg.borrower, BORROWER);
-        assertEq(cfg.feeWallet, FEE_WALLET);
-        assertEq(cfg.streamReceiver, streamReceiver);
-        assertEq(cfg.sablier, SABLIER);
-        assertEq(cfg.minThreshold, 10_000e6);
-        assertEq(cfg.minResidual, 1_000e6);
-        assertEq(cfg.apr, 0.121e18);
-        assertEq(cfg.holdingDays, 28);
-        assertEq(cfg.minProcessingPercent, 0.01e18);
+        assertEq(cfg.vault, VAULT, "vault mismatch");
+        assertEq(cfg.targetStrategy, TARGET_STRATEGY, "targetStrategy mismatch");
+        assertEq(cfg.safe, address(safe), "safe mismatch");
+        assertEq(cfg.companion, address(companion), "companion mismatch");
+        assertEq(cfg.baseAsset, USDC, "baseAsset mismatch");
+        assertEq(cfg.borrower, BORROWER, "borrower mismatch");
+        assertEq(cfg.feeWallet, FEE_WALLET, "feeWallet mismatch");
+        assertEq(cfg.streamReceiver, streamReceiver, "streamReceiver mismatch");
+        assertEq(cfg.sablier, SABLIER, "sablier mismatch");
+        assertEq(cfg.minThreshold, 10_000e6, "minThreshold mismatch");
+        assertEq(cfg.minResidual, 1_000e6, "minResidual mismatch");
+        assertEq(cfg.apr, 0.121e18, "apr mismatch");
+        assertEq(cfg.holdingDays, 28, "holdingDays mismatch");
+        assertEq(cfg.minProcessingPercent, 0.01e18, "minProcessingPercent mismatch");
     }
 
     function test_safeSetup() public view {
-        assertTrue(safe.isOwner(address(keeper)));
-        assertTrue(safe.isOwner(address(companion)));
-        assertEq(safe.getThreshold(), 2);
-        assertEq(safe.getOwners().length, 2);
+        assertTrue(safe.isOwner(address(keeper)), "keeper should be safe owner");
+        assertTrue(safe.isOwner(address(companion)), "companion should be safe owner");
+        assertEq(safe.getThreshold(), 2, "safe threshold should be 2");
+        assertEq(safe.getOwners().length, 2, "safe should have 2 owners");
     }
 
     function test_safeBalance() public view {
-        assertEq(IERC20(USDC).balanceOf(address(safe)), 100_000e6);
+        assertEq(IERC20(USDC).balanceOf(address(safe)), 100_000e6, "safe should have 100k USDC");
     }
 
     function test_roles() public view {
-        assertTrue(keeper.hasRole(keeper.DEFAULT_ADMIN_ROLE(), admin));
-        assertTrue(keeper.hasRole(keeper.CONFIG_MANAGER_ROLE(), admin));
-        assertTrue(keeper.hasRole(keeper.KEEPER_ROLE(), keeperBot));
+        assertTrue(keeper.hasRole(keeper.DEFAULT_ADMIN_ROLE(), admin), "admin should have DEFAULT_ADMIN_ROLE");
+        assertTrue(keeper.hasRole(keeper.CONFIG_MANAGER_ROLE(), admin), "admin should have CONFIG_MANAGER_ROLE");
+        assertTrue(keeper.hasRole(keeper.KEEPER_ROLE(), keeperBot), "keeperBot should have KEEPER_ROLE");
     }
 
     function test_companionOwnership() public view {
-        assertEq(companion.owner(), address(keeper));
+        assertEq(companion.owner(), address(keeper), "keeper should own companion");
     }
 
     function test_vaultExists() public view {
-        assertTrue(VAULT.code.length > 0);
+        assertTrue(VAULT.code.length > 0, "vault should have code");
     }
 
     function test_targetStrategyExists() public view {
-        assertTrue(TARGET_STRATEGY.code.length > 0);
+        assertTrue(TARGET_STRATEGY.code.length > 0, "targetStrategy should have code");
     }
 
     function test_sablierExists() public view {
-        assertTrue(SABLIER.code.length > 0);
+        assertTrue(SABLIER.code.length > 0, "sablier should have code");
     }
 
     function test_usdcDecimals() public view {
         (bool success, bytes memory data) = USDC.staticcall(abi.encodeWithSignature("decimals()"));
-        assertTrue(success);
-        assertEq(abi.decode(data, (uint8)), 6);
+        assertTrue(success, "decimals() call should succeed");
+        assertEq(abi.decode(data, (uint8)), 6, "USDC should have 6 decimals");
     }
 
     function test_yieldCalculation() public pure {
@@ -217,11 +217,11 @@ contract StrategyKeeperMainnetTest is Test {
 
         uint256 interest = (available * apr * holdingDays) / 365 / 1e18;
 
-        assertApproxEqAbs(interest, 928_219_178, 1e3);
+        assertApproxEqAbs(interest, 928_219_178, 1e3, "interest calculation mismatch");
 
         uint256 fee = interest / 11;
         uint256 streamAmount = interest - fee;
-        assertEq(fee + streamAmount, interest);
+        assertEq(fee + streamAmount, interest, "fee + streamAmount should equal interest");
     }
 
     function test_revertOnUnauthorizedKeeper() public {
@@ -265,34 +265,34 @@ contract StrategyKeeperMainnetTest is Test {
             USDC, 0, transferData, Enum.Operation.Call, 0, 0, 0, address(0), payable(0), signatures
         );
 
-        assertTrue(success);
-        assertEq(IERC20(USDC).balanceOf(recipient), recipientBefore + amount);
-        assertEq(IERC20(USDC).balanceOf(address(safe)), safeBefore - amount);
+        assertTrue(success, "safe transaction should succeed");
+        assertEq(IERC20(USDC).balanceOf(recipient), recipientBefore + amount, "recipient should receive amount");
+        assertEq(IERC20(USDC).balanceOf(address(safe)), safeBefore - amount, "safe balance should decrease by amount");
     }
 
     function test_companionHashApproval() public {
         bytes32 testHash = keccak256("test");
 
-        assertFalse(companion.isHashApproved(testHash));
+        assertFalse(companion.isHashApproved(testHash), "hash should not be approved initially");
 
         vm.prank(address(keeper));
         companion.approveHash(testHash);
-        assertTrue(companion.isHashApproved(testHash));
+        assertTrue(companion.isHashApproved(testHash), "hash should be approved after approveHash");
 
         vm.prank(address(keeper));
         companion.revokeHash(testHash);
-        assertFalse(companion.isHashApproved(testHash));
+        assertFalse(companion.isHashApproved(testHash), "hash should not be approved after revokeHash");
     }
 
     function test_companionIsValidSignature() public {
         bytes32 testHash = keccak256("test");
 
-        assertEq(companion.isValidSignature(testHash, ""), bytes4(0xffffffff));
+        assertEq(companion.isValidSignature(testHash, ""), bytes4(0xffffffff), "unapproved hash should return invalid");
 
         vm.prank(address(keeper));
         companion.approveHash(testHash);
 
-        assertEq(companion.isValidSignature(testHash, ""), bytes4(0x1626ba7e));
+        assertEq(companion.isValidSignature(testHash, ""), bytes4(0x1626ba7e), "approved hash should return magic value");
     }
 
     function test_configValidation_zeroVault() public {
@@ -427,7 +427,7 @@ contract StrategyKeeperMainnetTest is Test {
 
         // Even with 24h passed, vault balance is below minProcessingPercent of totalAssets
         vm.warp(block.timestamp + 24 hours);
-        assertFalse(keeper.shouldProcess());
+        assertFalse(keeper.shouldProcess(), "shouldProcess should be false when vault balance below minProcessingPercent");
     }
 
     function test_shouldProcess_vaultAboveThreshold() public {
@@ -436,7 +436,7 @@ contract StrategyKeeperMainnetTest is Test {
         IERC20(USDC).transfer(VAULT, 20_000e6);
 
         // minThreshold is 10_000e6, vault now has > 10k USDC
-        assertTrue(keeper.shouldProcess());
+        assertTrue(keeper.shouldProcess(), "shouldProcess should be true when vault above threshold");
     }
 
     function test_shouldProcess_timeBasedFallback() public {
@@ -472,20 +472,20 @@ contract StrategyKeeperMainnetTest is Test {
         keeper.processInflows();
 
         // Now lastProcessedTimestamp is set to current block.timestamp
-        assertEq(keeper.lastProcessedTimestamp(), block.timestamp);
+        assertEq(keeper.lastProcessedTimestamp(), block.timestamp, "lastProcessedTimestamp should be set");
 
         // Reset safe balance
         vm.prank(USDC_WHALE);
         IERC20(USDC).transfer(address(safe), 100_000e6);
 
         // Should be false immediately after processing (24h hasn't passed)
-        assertFalse(keeper.shouldProcess());
+        assertFalse(keeper.shouldProcess(), "shouldProcess should be false before 24h");
 
         // Warp 24 hours
         vm.warp(block.timestamp + 24 hours);
 
         // Now should be true (24h passed and available >= 1% of vault total)
-        assertTrue(keeper.shouldProcess());
+        assertTrue(keeper.shouldProcess(), "shouldProcess should be true after 24h");
     }
 
     function test_shouldProcess_timeBasedFallback_belowMinPercent() public {
@@ -515,12 +515,12 @@ contract StrategyKeeperMainnetTest is Test {
         vm.warp(block.timestamp + 24 hours);
 
         // Should be false (24h passed but available < 50% of vault total)
-        assertFalse(keeper.shouldProcess());
+        assertFalse(keeper.shouldProcess(), "shouldProcess should be false when below minProcessingPercent");
     }
 
     function test_lastProcessedTimestamp_initiallyZero() public view {
         // New keeper should have 0 timestamp
-        assertEq(keeper.lastProcessedTimestamp(), 0);
+        assertEq(keeper.lastProcessedTimestamp(), 0, "lastProcessedTimestamp should be 0 initially");
     }
 
     function test_lastProcessedTimestamp_updatedAfterProcess() public {
@@ -551,7 +551,7 @@ contract StrategyKeeperMainnetTest is Test {
         vm.prank(keeperBot);
         keeper.processInflows();
 
-        assertEq(keeper.lastProcessedTimestamp(), expectedTimestamp);
+        assertEq(keeper.lastProcessedTimestamp(), expectedTimestamp, "lastProcessedTimestamp should be updated after process");
     }
 
     function test_configValidation_minProcessingPercentTooHigh() public {
