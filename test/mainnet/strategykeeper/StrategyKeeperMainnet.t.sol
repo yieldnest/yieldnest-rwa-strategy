@@ -214,7 +214,7 @@ contract StrategyKeeperMainnetTest is Test {
     function test_revertOnUnauthorizedKeeper() public {
         vm.prank(address(0xDEAD));
         vm.expectRevert();
-        keeper.keeper();
+        keeper.processInflows();
     }
 
     function test_revertOnUnauthorizedConfigUpdate() public {
@@ -245,16 +245,8 @@ contract StrategyKeeperMainnetTest is Test {
 
         // Mock isValidSignature for both keeper and companion
         // Safe 1.4.1 uses legacy bytes format: isValidSignature(bytes,bytes) -> 0x20c13b0b
-        vm.mockCall(
-            address(keeper),
-            abi.encodeWithSelector(bytes4(0x20c13b0b)),
-            abi.encode(bytes4(0x20c13b0b))
-        );
-        vm.mockCall(
-            address(companion),
-            abi.encodeWithSelector(bytes4(0x20c13b0b)),
-            abi.encode(bytes4(0x20c13b0b))
-        );
+        vm.mockCall(address(keeper), abi.encodeWithSelector(bytes4(0x20c13b0b)), abi.encode(bytes4(0x20c13b0b)));
+        vm.mockCall(address(companion), abi.encodeWithSelector(bytes4(0x20c13b0b)), abi.encode(bytes4(0x20c13b0b)));
 
         bool success = safe.execTransaction(
             USDC, 0, transferData, Enum.Operation.Call, 0, 0, 0, address(0), payable(0), signatures

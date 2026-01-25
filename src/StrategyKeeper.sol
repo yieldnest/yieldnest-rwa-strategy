@@ -118,9 +118,9 @@ contract StrategyKeeper is
         _setConfig(config_);
     }
 
-    /// @notice Execute the keeper logic
+    /// @notice Execute the keeper logic to process inflows
     /// @dev Requires KEEPER_ROLE. All-or-nothing execution.
-    function keeper() external onlyRole(KEEPER_ROLE) nonReentrant {
+    function processInflows() external onlyRole(KEEPER_ROLE) nonReentrant {
         KeeperStorage storage s = _getKeeperStorage();
         KeeperConfig memory cfg = s.config;
 

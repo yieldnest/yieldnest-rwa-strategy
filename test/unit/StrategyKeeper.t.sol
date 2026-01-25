@@ -115,7 +115,7 @@ contract StrategyKeeperTest is Test {
     function test_revertOnUnauthorizedKeeper() public {
         vm.prank(address(0xBEEF));
         vm.expectRevert();
-        keeper.keeper();
+        keeper.processInflows();
     }
 
     function test_revertOnUnauthorizedConfigUpdate() public {
