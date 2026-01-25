@@ -202,7 +202,7 @@ contract StrategyKeeper is
             uint256 vaultTotalAssets = IERC4626(cfg.vault).totalAssets();
             uint256 minAmount = (vaultTotalAssets * cfg.minProcessingPercent) / PRECISION;
             if (vaultBalance >= minAmount) {
-                return (true, vaultBalance); // No vault allocation, just process safe funds
+                return (true, vaultBalance);
             }
         }
 
