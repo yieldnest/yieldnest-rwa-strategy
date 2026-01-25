@@ -2,9 +2,10 @@
 pragma solidity ^0.8.28;
 
 import {Test, console} from "forge-std/Test.sol";
-import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {StrategyKeeper, IStrategyKeeper} from "@src/StrategyKeeper.sol";
-import {KeeperCompanion, IKeeperCompanion} from "@src/KeeperCompanion.sol";
+import {TransparentUpgradeableProxy} from
+    "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {StrategyKeeper, IStrategyKeeper} from "src/StrategyKeeper.sol";
+import {KeeperCompanion, IKeeperCompanion} from "src/KeeperCompanion.sol";
 
 contract StrategyKeeperTest is Test {
     StrategyKeeper public keeper;

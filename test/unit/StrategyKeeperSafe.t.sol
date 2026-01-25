@@ -2,11 +2,12 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {StrategyKeeper, IStrategyKeeper} from "@src/StrategyKeeper.sol";
-import {KeeperCompanion} from "@src/KeeperCompanion.sol";
-import {IGnosisSafe} from "@src/interfaces/IGnosisSafe.sol";
+import {TransparentUpgradeableProxy} from
+    "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {StrategyKeeper, IStrategyKeeper} from "src/StrategyKeeper.sol";
+import {KeeperCompanion} from "src/KeeperCompanion.sol";
+import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
 
 /// @title MockERC20
 /// @notice Simple mock ERC20 for testing

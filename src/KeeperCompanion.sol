@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 pragma solidity ^0.8.28;
 
-import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {IERC1271} from "lib/openzeppelin-contracts/contracts/interfaces/IERC1271.sol";
+import {Ownable} from "lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 
 /// @title IKeeperCompanion
 /// @notice Interface for the KeeperCompanion contract

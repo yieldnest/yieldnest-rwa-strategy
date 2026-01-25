@@ -2,9 +2,10 @@
 pragma solidity ^0.8.28;
 
 import {Script, console} from "forge-std/Script.sol";
-import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {StrategyKeeper, IStrategyKeeper} from "@src/StrategyKeeper.sol";
-import {KeeperCompanion} from "@src/KeeperCompanion.sol";
+import {TransparentUpgradeableProxy} from
+    "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {StrategyKeeper, IStrategyKeeper} from "src/StrategyKeeper.sol";
+import {KeeperCompanion} from "src/KeeperCompanion.sol";
 import {MainnetStrategyActors} from "@script/Actors.sol";
 
 /// @title DeployKeeper
