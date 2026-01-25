@@ -33,6 +33,7 @@ interface IStrategyKeeper {
         uint256 minResidual; // Minimum to keep in Safe after disbursement
         uint256 apr; // APR where 1e18 = 100%
         uint256 holdingDays; // Days of yield to hold in advance (e.g., 28)
+        uint256 minProcessingPercent; // Min % of vault total for time-based fallback (1e18 = 100%)
     }
 
     error ZeroAddress();
@@ -81,6 +82,9 @@ contract StrategyKeeper is
     /// @notice Days per year for APR calculation
     uint256 public constant DAYS_PER_YEAR = 365;
 
+    /// @notice Time interval for fallback processing (24 hours)
+    uint256 public constant FALLBACK_INTERVAL = 24 hours;
+
     /// @notice Storage slot for keeper data
     bytes32 private constant KEEPER_STORAGE_SLOT = keccak256("yieldnest.storage.strategyKeeper");
 
@@ -88,6 +92,7 @@ contract StrategyKeeper is
     struct KeeperStorage {
         KeeperConfig config;
         mapping(bytes32 => bool) approvedHashes;
+        uint256 lastProcessedTimestamp;
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -124,27 +129,26 @@ contract StrategyKeeper is
         KeeperStorage storage s = _getKeeperStorage();
         KeeperConfig memory cfg = s.config;
 
-        // 1. Check vault balance and allocate if above threshold
-        uint256 vaultBalance = IERC20(cfg.baseAsset).balanceOf(cfg.vault);
-        uint256 vaultAllocation = 0;
+        // 1. Check if processing should occur and get vault allocation amount
+        (bool shouldExecute, uint256 vaultAllocation) = _shouldProcess(s, cfg);
+        if (!shouldExecute) revert NoFundsToProcess();
 
-        if (vaultBalance >= cfg.minThreshold) {
-            vaultAllocation = vaultBalance;
-            _allocateToStrategy(cfg, vaultBalance);
+        // 2. Allocate vault funds if needed (sends funds to safe via strategy)
+        if (vaultAllocation > 0) {
+            _allocateToStrategy(cfg, vaultAllocation);
         }
 
-        // 2. Calculate available funds in Safe (above minResidual)
+        // 3. Calculate available funds in Safe AFTER allocation (above minResidual)
         uint256 safeBalance = IERC20(cfg.baseAsset).balanceOf(cfg.safe);
         if (safeBalance <= cfg.minResidual) revert NoFundsToProcess();
-
         uint256 available = safeBalance - cfg.minResidual;
 
-        // 3. Calculate yield holdback
+        // 4. Calculate yield holdback
         // interest = available * apr * holdingDays / 365 / PRECISION
         uint256 interest = (available * cfg.apr * cfg.holdingDays) / DAYS_PER_YEAR / PRECISION;
         uint256 principal = available - interest;
 
-        // 4. Calculate fee split: 1/11 to fee wallet, 10/11 to stream
+        // 5. Calculate fee split: 1/11 to fee wallet, 10/11 to stream
         uint256 fee = interest / 11;
         uint256 streamAmount = interest - fee;
 
@@ -158,7 +162,57 @@ contract StrategyKeeper is
         // Create Sablier stream for remaining interest
         uint256 streamId = _createSablierStream(cfg, streamAmount);
 
+        // Record last processed timestamp
+        s.lastProcessedTimestamp = block.timestamp;
+
         emit KeeperExecuted(block.timestamp, vaultAllocation, principal, fee, streamAmount, streamId);
+    }
+
+    /// @notice Check if processing should occur (for off-chain keepers)
+    /// @dev Returns true if:
+    ///      1. Vault balance >= minThreshold, OR
+    ///      2. 24h passed since last processing AND safe balance >= minProcessingPercent of vault total assets
+    /// @return shouldExecute True if processInflows() should be called
+    function shouldProcess() external view returns (bool shouldExecute) {
+        KeeperStorage storage s = _getKeeperStorage();
+        KeeperConfig memory cfg = s.config;
+        (shouldExecute,) = _shouldProcess(s, cfg);
+    }
+
+    /// @notice Internal check for processing conditions
+    /// @dev Checks if vault needs allocation OR if time-based fallback triggers
+    /// @param s Storage reference
+    /// @param cfg Keeper configuration
+    /// @return shouldExecute True if processing should occur
+    /// @return vaultAllocation Amount to allocate from vault (0 if none)
+    function _shouldProcess(KeeperStorage storage s, KeeperConfig memory cfg)
+        internal
+        view
+        returns (bool shouldExecute, uint256 vaultAllocation)
+    {
+        // Condition 1: Vault balance above threshold triggers immediate processing
+        uint256 vaultBalance = IERC20(cfg.baseAsset).balanceOf(cfg.vault);
+        if (vaultBalance >= cfg.minThreshold) {
+            return (true, vaultBalance);
+        }
+
+        // Condition 2: Time-based fallback with percentage check
+        // If 24h passed since last processing AND safe available >= minProcessingPercent of vault total
+        if (block.timestamp >= s.lastProcessedTimestamp + FALLBACK_INTERVAL) {
+            uint256 vaultTotalAssets = IERC4626(cfg.vault).totalAssets();
+            uint256 minAmount = (vaultTotalAssets * cfg.minProcessingPercent) / PRECISION;
+            if (vaultBalance >= minAmount) {
+                return (true, vaultBalance); // No vault allocation, just process safe funds
+            }
+        }
+
+        return (false, 0);
+    }
+
+    /// @notice Get the last processed timestamp
+    /// @return timestamp Unix timestamp of last processing
+    function lastProcessedTimestamp() external view returns (uint256 timestamp) {
+        return _getKeeperStorage().lastProcessedTimestamp;
     }
 
     /// @notice Allocate funds from vault to strategy via processor
@@ -385,6 +439,7 @@ contract StrategyKeeper is
         if (config_.sablier == address(0)) revert ZeroAddress();
         if (config_.apr == 0 || config_.apr > PRECISION) revert InvalidConfiguration();
         if (config_.holdingDays == 0) revert InvalidConfiguration();
+        if (config_.minProcessingPercent > PRECISION) revert InvalidConfiguration();
 
         _getKeeperStorage().config = config_;
         emit ConfigUpdated();

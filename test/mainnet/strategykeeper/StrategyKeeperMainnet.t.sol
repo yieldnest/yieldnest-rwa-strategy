@@ -68,7 +68,8 @@ contract StrategyKeeperMainnetTest is Test {
                     minThreshold: 10_000e6,
                     minResidual: 1_000e6,
                     apr: 0.121e18,
-                    holdingDays: 28
+                    holdingDays: 28,
+                    minProcessingPercent: 0.01e18 // 1%
                 })
             )
         );
@@ -98,7 +99,8 @@ contract StrategyKeeperMainnetTest is Test {
                 minThreshold: 10_000e6,
                 minResidual: 1_000e6,
                 apr: 0.121e18,
-                holdingDays: 28
+                holdingDays: 28,
+                minProcessingPercent: 0.01e18 // 1%
             })
         );
         keeper.grantRole(keeper.KEEPER_ROLE(), keeperBot);
@@ -154,6 +156,7 @@ contract StrategyKeeperMainnetTest is Test {
         assertEq(cfg.minResidual, 1_000e6);
         assertEq(cfg.apr, 0.121e18);
         assertEq(cfg.holdingDays, 28);
+        assertEq(cfg.minProcessingPercent, 0.01e18);
     }
 
     function test_safeSetup() public view {
@@ -336,7 +339,8 @@ contract StrategyKeeperMainnetTest is Test {
                 minThreshold: type(uint256).max, // Set very high to skip vault allocation
                 minResidual: 1_000e6,
                 apr: 0.121e18,
-                holdingDays: 28
+                holdingDays: 28,
+                minProcessingPercent: 0.01e18
             })
         );
         vm.stopPrank();
@@ -398,7 +402,8 @@ contract StrategyKeeperMainnetTest is Test {
                 minThreshold: type(uint256).max, // Skip vault allocation
                 minResidual: 100_000e6, // Set minResidual equal to safe balance
                 apr: 0.121e18,
-                holdingDays: 28
+                holdingDays: 28,
+                minProcessingPercent: 0.01e18
             })
         );
         vm.stopPrank();
@@ -407,6 +412,167 @@ contract StrategyKeeperMainnetTest is Test {
         vm.prank(keeperBot);
         vm.expectRevert(IStrategyKeeper.NoFundsToProcess.selector);
         keeper.processInflows();
+    }
+
+    function test_shouldProcess_noFundsAvailable() public {
+        // Set minResidual equal to safe balance AND minThreshold very high
+        // so neither condition triggers
+        vm.prank(admin);
+        keeper.setConfig(
+            IStrategyKeeper.KeeperConfig({
+                vault: VAULT,
+                targetStrategy: TARGET_STRATEGY,
+                safe: address(safe),
+                companion: address(companion),
+                baseAsset: USDC,
+                borrower: BORROWER,
+                feeWallet: FEE_WALLET,
+                streamReceiver: streamReceiver,
+                sablier: SABLIER,
+                minThreshold: type(uint256).max, // Skip vault condition
+                minResidual: 100_000e6, // Equal to safe balance
+                apr: 0.121e18,
+                holdingDays: 28,
+                minProcessingPercent: 0.01e18
+            })
+        );
+
+        // Even with 24h passed, no funds available in safe above minResidual
+        vm.warp(block.timestamp + 24 hours);
+        assertFalse(keeper.shouldProcess());
+    }
+
+    function test_shouldProcess_vaultAboveThreshold() public {
+        // Fund vault with USDC above threshold
+        vm.prank(USDC_WHALE);
+        IERC20(USDC).transfer(VAULT, 20_000e6);
+
+        // minThreshold is 10_000e6, vault now has > 10k USDC
+        assertTrue(keeper.shouldProcess());
+    }
+
+    function test_shouldProcess_timeBasedFallback() public {
+        // Set minThreshold very high so condition 1 won't trigger
+        vm.prank(admin);
+        keeper.setConfig(
+            IStrategyKeeper.KeeperConfig({
+                vault: VAULT,
+                targetStrategy: TARGET_STRATEGY,
+                safe: address(safe),
+                companion: address(companion),
+                baseAsset: USDC,
+                borrower: BORROWER,
+                feeWallet: FEE_WALLET,
+                streamReceiver: streamReceiver,
+                sablier: SABLIER,
+                minThreshold: type(uint256).max,
+                minResidual: 1_000e6,
+                apr: 0.121e18,
+                holdingDays: 28,
+                minProcessingPercent: 0.01e18 // 1%
+            })
+        );
+
+        // Initially should return false (lastProcessedTimestamp is 0, but we need 24h to pass)
+        // Actually with lastProcessedTimestamp=0, block.timestamp >= 0 + 24h is true
+        // So we need to check if available >= minAmount
+        // available = 99_000e6, vault totalAssets check
+        // Let's first do a process to set timestamp
+        vm.mockCall(address(keeper), abi.encodeWithSelector(bytes4(0x20c13b0b)), abi.encode(bytes4(0x20c13b0b)));
+        vm.mockCall(address(companion), abi.encodeWithSelector(bytes4(0x20c13b0b)), abi.encode(bytes4(0x20c13b0b)));
+        vm.prank(keeperBot);
+        keeper.processInflows();
+
+        // Now lastProcessedTimestamp is set to current block.timestamp
+        assertEq(keeper.lastProcessedTimestamp(), block.timestamp);
+
+        // Reset safe balance
+        vm.prank(USDC_WHALE);
+        IERC20(USDC).transfer(address(safe), 100_000e6);
+
+        // Should be false immediately after processing (24h hasn't passed)
+        assertFalse(keeper.shouldProcess());
+
+        // Warp 24 hours
+        vm.warp(block.timestamp + 24 hours);
+
+        // Now should be true (24h passed and available >= 1% of vault total)
+        assertTrue(keeper.shouldProcess());
+    }
+
+    function test_shouldProcess_timeBasedFallback_belowMinPercent() public {
+        // Set minThreshold very high so condition 1 won't trigger
+        // Set minProcessingPercent very high so time-based fallback fails
+        vm.prank(admin);
+        keeper.setConfig(
+            IStrategyKeeper.KeeperConfig({
+                vault: VAULT,
+                targetStrategy: TARGET_STRATEGY,
+                safe: address(safe),
+                companion: address(companion),
+                baseAsset: USDC,
+                borrower: BORROWER,
+                feeWallet: FEE_WALLET,
+                streamReceiver: streamReceiver,
+                sablier: SABLIER,
+                minThreshold: type(uint256).max,
+                minResidual: 99_999e6, // Only 1e6 available
+                apr: 0.121e18,
+                holdingDays: 28,
+                minProcessingPercent: 0.5e18 // 50% - way higher than available
+            })
+        );
+
+        // Warp 24 hours from now
+        vm.warp(block.timestamp + 24 hours);
+
+        // Should be false (24h passed but available < 50% of vault total)
+        assertFalse(keeper.shouldProcess());
+    }
+
+    function test_lastProcessedTimestamp_initiallyZero() public view {
+        // New keeper should have 0 timestamp
+        assertEq(keeper.lastProcessedTimestamp(), 0);
+    }
+
+    function test_lastProcessedTimestamp_updatedAfterProcess() public {
+        vm.prank(admin);
+        keeper.setConfig(
+            IStrategyKeeper.KeeperConfig({
+                vault: VAULT,
+                targetStrategy: TARGET_STRATEGY,
+                safe: address(safe),
+                companion: address(companion),
+                baseAsset: USDC,
+                borrower: BORROWER,
+                feeWallet: FEE_WALLET,
+                streamReceiver: streamReceiver,
+                sablier: SABLIER,
+                minThreshold: type(uint256).max,
+                minResidual: 1_000e6,
+                apr: 0.121e18,
+                holdingDays: 28,
+                minProcessingPercent: 0.01e18
+            })
+        );
+
+        vm.mockCall(address(keeper), abi.encodeWithSelector(bytes4(0x20c13b0b)), abi.encode(bytes4(0x20c13b0b)));
+        vm.mockCall(address(companion), abi.encodeWithSelector(bytes4(0x20c13b0b)), abi.encode(bytes4(0x20c13b0b)));
+
+        uint256 expectedTimestamp = block.timestamp;
+        vm.prank(keeperBot);
+        keeper.processInflows();
+
+        assertEq(keeper.lastProcessedTimestamp(), expectedTimestamp);
+    }
+
+    function test_configValidation_minProcessingPercentTooHigh() public {
+        IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
+        cfg.minProcessingPercent = 2e18; // 200%, invalid
+
+        vm.prank(admin);
+        vm.expectRevert(IStrategyKeeper.InvalidConfiguration.selector);
+        keeper.setConfig(cfg);
     }
 
     function _buildContractSignatures(address signer1, address signer2) internal pure returns (bytes memory) {

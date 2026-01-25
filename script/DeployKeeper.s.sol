@@ -25,6 +25,7 @@ contract DeployKeeper is Script {
     uint256 public minResidual;
     uint256 public apr; // 1e18 = 100%
     uint256 public holdingDays;
+    uint256 public minProcessingPercent; // 1e18 = 100%
 
     StrategyKeeper public keeperImplementation;
     StrategyKeeper public keeper;
@@ -43,6 +44,7 @@ contract DeployKeeper is Script {
         minResidual = 1_000e6; // Keep 1,000 USDC in Safe
         apr = 0.121e18; // 12.1% APR
         holdingDays = 28;
+        minProcessingPercent = 0.01e18; // 1%
 
         vm.startBroadcast();
 
@@ -74,7 +76,8 @@ contract DeployKeeper is Script {
                     minThreshold: minThreshold,
                     minResidual: minResidual,
                     apr: apr,
-                    holdingDays: holdingDays
+                    holdingDays: holdingDays,
+                    minProcessingPercent: minProcessingPercent
                 })
             )
         );
@@ -104,7 +107,8 @@ contract DeployKeeper is Script {
                 minThreshold: minThreshold,
                 minResidual: minResidual,
                 apr: apr,
-                holdingDays: holdingDays
+                holdingDays: holdingDays,
+                minProcessingPercent: minProcessingPercent
             })
         );
 
