@@ -11,6 +11,7 @@ import {IERC1271} from "lib/openzeppelin-contracts/contracts/interfaces/IERC1271
 import {IERC4626} from "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 import {SafeERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
+import {Ownable} from "lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
 import {IKeeperCompanion} from "src/KeeperCompanion.sol";
 import {ISablierLockupLinear} from "src/interfaces/sablier/ISablierLockupLinear.sol";
@@ -41,15 +42,11 @@ interface IStrategyKeeper {
     error InsufficientSafeBalance(uint256 balance, uint256 required);
     error SafeExecutionFailed();
     error InvalidConfiguration();
+    error InvalidCompanionOwner();
     error NoFundsToProcess();
 
     event KeeperExecuted(
-        uint256 indexed timestamp,
-        uint256 vaultAllocation,
-        uint256 principal,
-        uint256 fee,
-        uint256 streamAmount,
-        uint256 streamId
+        uint256 indexed timestamp, uint256 vaultAllocation, uint256 principal, uint256 fee, uint256 streamAmount
     );
     event ConfigUpdated();
 }
@@ -166,12 +163,12 @@ contract StrategyKeeper is
         _executeSafeTransfer(cfg, cfg.feeWallet, fee);
 
         // Create Sablier stream for remaining interest
-        uint256 streamId = _createSablierStream(cfg, streamAmount);
+        _createSablierStream(cfg, streamAmount);
 
         // Record last processed timestamp
         s.lastProcessedTimestamp = block.timestamp;
 
-        emit KeeperExecuted(block.timestamp, vaultAllocation, principal, fee, streamAmount, streamId);
+        emit KeeperExecuted(block.timestamp, vaultAllocation, principal, fee, streamAmount);
     }
 
     /// @notice Check if processing should occur (for off-chain keepers)
@@ -256,8 +253,7 @@ contract StrategyKeeper is
     /// @notice Create a Sablier stream from the Safe
     /// @param cfg Keeper configuration
     /// @param amount Amount to stream
-    /// @return streamId The created stream ID
-    function _createSablierStream(KeeperConfig memory cfg, uint256 amount) internal returns (uint256 streamId) {
+    function _createSablierStream(KeeperConfig memory cfg, uint256 amount) internal {
         // First approve Sablier to spend the stream amount
         bytes memory approveData = abi.encodeCall(IERC20.approve, (cfg.sablier, amount));
         _executeSafeTransaction(cfg, cfg.baseAsset, 0, approveData);
@@ -284,10 +280,6 @@ contract StrategyKeeper is
         bytes memory createData =
             abi.encodeCall(ISablierLockupLinear.createWithTimestampsLL, (params, unlockAmounts, 0));
         _executeSafeTransaction(cfg, cfg.sablier, 0, createData);
-
-        // Note: Safe's execTransaction returns bool, not the inner call's return data
-        // Stream ID can be retrieved from events if needed
-        streamId = 0;
     }
 
     /// @notice Execute a transaction from the Gnosis Safe with contract signatures
@@ -465,6 +457,9 @@ contract StrategyKeeper is
         if (config_.apr == 0 || config_.apr > PRECISION) revert InvalidConfiguration();
         if (config_.holdingDays == 0) revert InvalidConfiguration();
         if (config_.minProcessingPercent > PRECISION) revert InvalidConfiguration();
+        if (config_.companion.code.length > 0 && Ownable(config_.companion).owner() != address(this)) {
+            revert InvalidCompanionOwner();
+        }
 
         _getKeeperStorage().config = config_;
         emit ConfigUpdated();
