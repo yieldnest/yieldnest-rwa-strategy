@@ -25,6 +25,7 @@ interface ISablierLockup {
     function getEndTime(uint256 streamId) external view returns (uint40);
     function isCancelable(uint256 streamId) external view returns (bool);
     function isTransferable(uint256 streamId) external view returns (bool);
+    function ownerOf(uint256 streamId) external view returns (address); // ERC-721 NFT owner
 }
 
 /// @title StrategyKeeperMainnetTest
@@ -367,6 +368,7 @@ contract StrategyKeeperMainnetTest is Test {
         // Assert stream fields are correct
         assertEq(sablier.getSender(expectedStreamId), address(safe), "Stream sender should be safe");
         assertEq(sablier.getRecipient(expectedStreamId), streamReceiver, "Stream recipient should be streamReceiver");
+        assertEq(sablier.ownerOf(expectedStreamId), streamReceiver, "Stream NFT owner should be streamReceiver");
         assertEq(sablier.getDepositedAmount(expectedStreamId), uint128(streamAmount), "Stream deposit should match");
         assertEq(sablier.getStartTime(expectedStreamId), uint40(expectedStartTime), "Stream start time should match");
         assertEq(sablier.getEndTime(expectedStreamId), uint40(expectedEndTime), "Stream end time should match");
