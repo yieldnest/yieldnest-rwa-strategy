@@ -16,6 +16,17 @@ interface IVaultRoles is IAccessControl {
     function PROCESSOR_ROLE() external view returns (bytes32);
 }
 
+interface ISablierLockup {
+    function nextStreamId() external view returns (uint256);
+    function getSender(uint256 streamId) external view returns (address);
+    function getRecipient(uint256 streamId) external view returns (address);
+    function getDepositedAmount(uint256 streamId) external view returns (uint128);
+    function getStartTime(uint256 streamId) external view returns (uint40);
+    function getEndTime(uint256 streamId) external view returns (uint40);
+    function isCancelable(uint256 streamId) external view returns (bool);
+    function isTransferable(uint256 streamId) external view returns (bool);
+}
+
 /// @title StrategyKeeperMainnetTest
 /// @notice Integration tests for StrategyKeeper with mainnet fork
 /// @dev Run with: forge test --match-path "test/mainnet/strategykeeper/*.sol" --fork-url <RPC_URL>
@@ -314,6 +325,10 @@ contract StrategyKeeperMainnetTest is Test {
         uint256 feeWalletBalanceBefore = IERC20(USDC).balanceOf(FEE_WALLET);
         uint256 sablierBalanceBefore = IERC20(USDC).balanceOf(SABLIER);
 
+        // Get expected stream ID before execution
+        ISablierLockup sablier = ISablierLockup(SABLIER);
+        uint256 expectedStreamId = sablier.nextStreamId();
+
         // Calculate expected amounts
         IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
         uint256 available = safeBalanceBefore - cfg.minResidual;
@@ -321,6 +336,10 @@ contract StrategyKeeperMainnetTest is Test {
         uint256 principal = available - interest;
         uint256 fee = interest / cfg.feeFraction;
         uint256 streamAmount = interest - fee;
+
+        // Record timestamp for stream verification
+        uint256 expectedStartTime = block.timestamp;
+        uint256 expectedEndTime = block.timestamp + cfg.holdingDays * 1 days;
 
         // Execute processInflows
         vm.prank(keeperBot);
@@ -341,6 +360,18 @@ contract StrategyKeeperMainnetTest is Test {
         assertEq(
             IERC20(USDC).balanceOf(SABLIER), sablierBalanceBefore + streamAmount, "Sablier should hold stream amount"
         );
+
+        // Assert next stream ID incremented
+        assertEq(sablier.nextStreamId(), expectedStreamId + 1, "Stream ID should increment");
+
+        // Assert stream fields are correct
+        assertEq(sablier.getSender(expectedStreamId), address(safe), "Stream sender should be safe");
+        assertEq(sablier.getRecipient(expectedStreamId), streamReceiver, "Stream recipient should be streamReceiver");
+        assertEq(sablier.getDepositedAmount(expectedStreamId), uint128(streamAmount), "Stream deposit should match");
+        assertEq(sablier.getStartTime(expectedStreamId), uint40(expectedStartTime), "Stream start time should match");
+        assertEq(sablier.getEndTime(expectedStreamId), uint40(expectedEndTime), "Stream end time should match");
+        assertTrue(sablier.isCancelable(expectedStreamId), "Stream should be cancelable");
+        assertTrue(sablier.isTransferable(expectedStreamId), "Stream should be transferable");
     }
 
     function test_processInflows_noFundsToProcess() public {
