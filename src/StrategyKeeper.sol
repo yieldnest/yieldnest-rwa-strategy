@@ -47,7 +47,13 @@ interface IStrategyKeeper {
     error NoFundsToProcess();
 
     event KeeperExecuted(
-        uint256 indexed timestamp, uint256 vaultAllocation, uint256 principal, uint256 fee, uint256 streamAmount
+        uint256 indexed timestamp,
+        uint256 vaultAllocation,
+        uint256 safeBalance,
+        uint256 minResidual,
+        uint256 principal,
+        uint256 fee,
+        uint256 streamAmount
     );
     event ConfigUpdated();
 }
@@ -169,7 +175,9 @@ contract StrategyKeeper is
         // Record last processed timestamp
         s.lastProcessedTimestamp = block.timestamp;
 
-        emit KeeperExecuted(block.timestamp, vaultAllocation, principal, fee, streamAmount);
+        emit KeeperExecuted(
+            block.timestamp, vaultAllocation, safeBalance, cfg.minResidual, principal, fee, streamAmount
+        );
     }
 
     /// @notice Check if processing should occur (for off-chain keepers)
