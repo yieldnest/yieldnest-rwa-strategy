@@ -7,26 +7,21 @@ import {TransparentUpgradeableProxy} from
 import {StrategyKeeper, IStrategyKeeper} from "src/StrategyKeeper.sol";
 import {KeeperCompanion} from "src/KeeperCompanion.sol";
 import {MainnetStrategyActors} from "@script/Actors.sol";
+import {MainnetKeeperContracts} from "@script/Contracts.sol";
 
 /// @title DeployKeeper
 /// @notice Deployment script for StrategyKeeper and KeeperCompanion
 contract DeployKeeper is Script {
-    // Mainnet addresses
-    address public constant SABLIER_LOCKUP_LINEAR = 0xcF8ce57fa442ba50aCbC57147a62aD03873FfA73;
-    address public constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+    // Deployment parameters (customize these before deployment)
+    uint256 public minThreshold = 10_000e6; // 10,000 USDC minimum to trigger allocation
+    uint256 public minResidual = 1_000e6; // Keep 1,000 USDC in Safe
+    uint256 public apr = 0.121e18; // 12.1% APR
+    uint256 public holdingDays = 28;
+    uint256 public minProcessingPercent = 0.01e18; // 1%
+    uint256 public feeFraction = 11; // 1/11 to fee wallet, 10/11 to stream
 
-    // These need to be set before deployment
-    address public vault;
-    address public targetStrategy;
-    address public borrower;
-    address public feeWallet;
-    address public streamReceiver;
-    uint256 public minThreshold;
-    uint256 public minResidual;
-    uint256 public apr; // 1e18 = 100%
-    uint256 public holdingDays;
-    uint256 public minProcessingPercent; // 1e18 = 100%
-    uint256 public feeFraction; // Fee denominator (e.g., 11 means 1/11 to fee wallet)
+    // Borrower address (set this before deployment)
+    address public borrower = address(0); // TODO: Set to borrower address
 
     StrategyKeeper public keeperImplementation;
     StrategyKeeper public keeper;
@@ -35,18 +30,7 @@ contract DeployKeeper is Script {
     function run() external {
         MainnetStrategyActors actors = new MainnetStrategyActors();
 
-        // Set deployment parameters (customize these)
-        vault = 0x01Ba69727E2860b37bc1a2bd56999c1aFb4C15D8; // YNRWAX
-        targetStrategy = address(0); // Set to deployed FlexStrategy address
-        borrower = address(0); // Set to borrower address
-        feeWallet = address(0); // Set to fee wallet address
-        streamReceiver = address(0); // Set to stream receiver address
-        minThreshold = 10_000e6; // 10,000 USDC minimum to trigger allocation
-        minResidual = 1_000e6; // Keep 1,000 USDC in Safe
-        apr = 0.121e18; // 12.1% APR
-        holdingDays = 28;
-        minProcessingPercent = 0.01e18; // 1%
-        feeFraction = 11; // 1/11 to fee wallet, 10/11 to stream
+        require(borrower != address(0), "Borrower address not set");
 
         vm.startBroadcast();
 
@@ -54,27 +38,21 @@ contract DeployKeeper is Script {
         keeperImplementation = new StrategyKeeper();
         console.log("StrategyKeeper implementation:", address(keeperImplementation));
 
-        // 2. Compute proxy address for KeeperCompanion ownership
-        // We need to deploy companion first with the proxy address
-        // Use CREATE2 or compute address manually
-
-        // For simplicity, we'll deploy in order and update companion ownership after
-
-        // 3. Deploy proxy with temporary config (will update after companion deployment)
+        // 2. Deploy proxy with temporary config (will update after companion deployment)
         bytes memory initData = abi.encodeCall(
             StrategyKeeper.initialize,
             (
                 actors.ADMIN(),
                 IStrategyKeeper.KeeperConfig({
-                    vault: vault,
-                    targetStrategy: targetStrategy,
+                    vault: MainnetKeeperContracts.YNRWAX,
+                    targetStrategy: MainnetKeeperContracts.FLEX_STRATEGY,
                     safe: actors.SAFE(),
                     companion: address(1), // Temporary, will update
-                    baseAsset: USDC,
+                    baseAsset: MainnetKeeperContracts.USDC,
                     borrower: borrower,
-                    feeWallet: feeWallet,
-                    streamReceiver: streamReceiver,
-                    sablier: SABLIER_LOCKUP_LINEAR,
+                    feeWallet: MainnetKeeperContracts.FEE_WALLET,
+                    streamReceiver: MainnetKeeperContracts.REWARDS_SWEEPER, // Rewards sweeper receives Sablier streams
+                    sablier: MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR,
                     minThreshold: minThreshold,
                     minResidual: minResidual,
                     apr: apr,
@@ -91,22 +69,22 @@ contract DeployKeeper is Script {
         console.log("StrategyKeeper proxy:", address(keeper));
         console.log("Proxy admin:", actors.ADMIN());
 
-        // 4. Deploy KeeperCompanion with keeper as owner
+        // 3. Deploy KeeperCompanion with keeper as owner
         companion = new KeeperCompanion(address(keeper));
         console.log("KeeperCompanion:", address(companion));
 
-        // 5. Update keeper config with correct companion address
+        // 4. Update keeper config with correct companion address
         keeper.setConfig(
             IStrategyKeeper.KeeperConfig({
-                vault: vault,
-                targetStrategy: targetStrategy,
+                vault: MainnetKeeperContracts.YNRWAX,
+                targetStrategy: MainnetKeeperContracts.FLEX_STRATEGY,
                 safe: actors.SAFE(),
                 companion: address(companion),
-                baseAsset: USDC,
+                baseAsset: MainnetKeeperContracts.USDC,
                 borrower: borrower,
-                feeWallet: feeWallet,
-                streamReceiver: streamReceiver,
-                sablier: SABLIER_LOCKUP_LINEAR,
+                feeWallet: MainnetKeeperContracts.FEE_WALLET,
+                streamReceiver: MainnetKeeperContracts.REWARDS_SWEEPER, // Rewards sweeper receives Sablier streams
+                sablier: MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR,
                 minThreshold: minThreshold,
                 minResidual: minResidual,
                 apr: apr,
@@ -123,6 +101,13 @@ contract DeployKeeper is Script {
         console.log("StrategyKeeper Implementation:", address(keeperImplementation));
         console.log("StrategyKeeper Proxy:", address(keeper));
         console.log("KeeperCompanion:", address(companion));
+        console.log("");
+        console.log("=== Configuration ===");
+        console.log("Vault (ynRWAx):", MainnetKeeperContracts.YNRWAX);
+        console.log("Target Strategy:", MainnetKeeperContracts.FLEX_STRATEGY);
+        console.log("Fee Wallet:", MainnetKeeperContracts.FEE_WALLET);
+        console.log("Stream Receiver (Rewards Sweeper):", MainnetKeeperContracts.REWARDS_SWEEPER);
+        console.log("Borrower:", borrower);
         console.log("");
         console.log("=== Required Manual Steps ===");
         console.log("1. Add StrategyKeeper as Safe owner:", address(keeper));
