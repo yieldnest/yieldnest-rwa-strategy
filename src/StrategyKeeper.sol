@@ -27,14 +27,15 @@ interface IStrategyKeeper {
         address companion; // KeeperCompanion contract for co-signing
         address baseAsset; // The base asset (e.g., USDC)
         address borrower; // Address to receive principal
-        address feeWallet; // Address to receive 1/11 of interest
-        address streamReceiver; // Address to receive 10/11 of interest via stream
+        address feeWallet; // Address to receive 1/feeFraction of interest
+        address streamReceiver; // Address to receive (feeFraction-1)/feeFraction of interest via stream
         address sablier; // Sablier LockupLinear contract
         uint256 minThreshold; // Minimum vault balance to trigger allocation
         uint256 minResidual; // Minimum to keep in Safe after disbursement
         uint256 apr; // APR where 1e18 = 100%
         uint256 holdingDays; // Days of yield to hold in advance (e.g., 28)
         uint256 minProcessingPercent; // Min % of vault total for time-based fallback (1e18 = 100%)
+        uint256 feeFraction; // Fee denominator (e.g., 11 means 1/11 to fee wallet, 10/11 to stream)
     }
 
     error ZeroAddress();
@@ -151,8 +152,8 @@ contract StrategyKeeper is
         uint256 interest = (available * cfg.apr * cfg.holdingDays) / DAYS_PER_YEAR / PRECISION;
         uint256 principal = available - interest;
 
-        // 5. Calculate fee split: 1/11 to fee wallet, 10/11 to stream
-        uint256 fee = interest / 11;
+        // 5. Calculate fee split: 1/feeFraction to fee wallet, (feeFraction-1)/feeFraction to stream
+        uint256 fee = interest / cfg.feeFraction;
         uint256 streamAmount = interest - fee;
 
         // 5. Execute Safe transactions
@@ -457,6 +458,7 @@ contract StrategyKeeper is
         if (config_.apr == 0 || config_.apr > PRECISION) revert InvalidConfiguration();
         if (config_.holdingDays == 0) revert InvalidConfiguration();
         if (config_.minProcessingPercent > PRECISION) revert InvalidConfiguration();
+        if (config_.feeFraction < 2) revert InvalidConfiguration();
         if (config_.companion.code.length > 0 && Ownable(config_.companion).owner() != address(this)) {
             revert InvalidCompanionOwner();
         }

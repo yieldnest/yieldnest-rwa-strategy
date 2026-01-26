@@ -79,7 +79,8 @@ contract StrategyKeeperMainnetTest is Test {
                     minResidual: 1_000e6,
                     apr: 0.121e18,
                     holdingDays: 28,
-                    minProcessingPercent: 0.01e18 // 1%
+                    minProcessingPercent: 0.01e18, // 1%
+                    feeFraction: 11
                 })
             )
         );
@@ -110,7 +111,8 @@ contract StrategyKeeperMainnetTest is Test {
                 minResidual: 1_000e6,
                 apr: 0.121e18,
                 holdingDays: 28,
-                minProcessingPercent: 0.01e18 // 1%
+                minProcessingPercent: 0.01e18, // 1%
+                feeFraction: 11
             })
         );
         keeper.grantRole(keeper.KEEPER_ROLE(), keeperBot);
@@ -317,7 +319,7 @@ contract StrategyKeeperMainnetTest is Test {
         uint256 available = safeBalanceBefore - cfg.minResidual;
         uint256 interest = (available * cfg.apr * cfg.holdingDays) / 365 / 1e18;
         uint256 principal = available - interest;
-        uint256 fee = interest / 11;
+        uint256 fee = interest / cfg.feeFraction;
         uint256 streamAmount = interest - fee;
 
         // Execute processInflows
@@ -359,7 +361,8 @@ contract StrategyKeeperMainnetTest is Test {
                 minResidual: 100_000e6, // Set minResidual equal to safe balance
                 apr: 0.121e18,
                 holdingDays: 28,
-                minProcessingPercent: 0.01e18
+                minProcessingPercent: 0.01e18,
+                feeFraction: 11
             })
         );
         vm.stopPrank();
@@ -390,7 +393,8 @@ contract StrategyKeeperMainnetTest is Test {
                 minResidual: 100_000e6, // Equal to safe balance
                 apr: 0.121e18,
                 holdingDays: 28,
-                minProcessingPercent: 0.5e18 // 50% - vault balance (77K) < 50% of totalAssets (~1.77M) = ~885K
+                minProcessingPercent: 0.5e18, // 50% - vault balance (77K) < 50% of totalAssets (~1.77M) = ~885K
+                feeFraction: 11
             })
         );
 
@@ -428,7 +432,8 @@ contract StrategyKeeperMainnetTest is Test {
                 minResidual: 1_000e6,
                 apr: 0.121e18,
                 holdingDays: 28,
-                minProcessingPercent: 0.01e18 // 1%
+                minProcessingPercent: 0.01e18, // 1%
+                feeFraction: 11
             })
         );
 
@@ -476,7 +481,8 @@ contract StrategyKeeperMainnetTest is Test {
                 minResidual: 99_999e6, // Only 1e6 available
                 apr: 0.121e18,
                 holdingDays: 28,
-                minProcessingPercent: 0.5e18 // 50% - way higher than available
+                minProcessingPercent: 0.5e18, // 50% - way higher than available
+                feeFraction: 11
             })
         );
 
@@ -509,7 +515,8 @@ contract StrategyKeeperMainnetTest is Test {
                 minResidual: 1_000e6,
                 apr: 0.121e18,
                 holdingDays: 28,
-                minProcessingPercent: 0.01e18
+                minProcessingPercent: 0.01e18,
+                feeFraction: 11
             })
         );
 

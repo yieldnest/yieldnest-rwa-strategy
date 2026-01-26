@@ -26,6 +26,7 @@ contract DeployKeeper is Script {
     uint256 public apr; // 1e18 = 100%
     uint256 public holdingDays;
     uint256 public minProcessingPercent; // 1e18 = 100%
+    uint256 public feeFraction; // Fee denominator (e.g., 11 means 1/11 to fee wallet)
 
     StrategyKeeper public keeperImplementation;
     StrategyKeeper public keeper;
@@ -45,6 +46,7 @@ contract DeployKeeper is Script {
         apr = 0.121e18; // 12.1% APR
         holdingDays = 28;
         minProcessingPercent = 0.01e18; // 1%
+        feeFraction = 11; // 1/11 to fee wallet, 10/11 to stream
 
         vm.startBroadcast();
 
@@ -77,7 +79,8 @@ contract DeployKeeper is Script {
                     minResidual: minResidual,
                     apr: apr,
                     holdingDays: holdingDays,
-                    minProcessingPercent: minProcessingPercent
+                    minProcessingPercent: minProcessingPercent,
+                    feeFraction: feeFraction
                 })
             )
         );
@@ -108,7 +111,8 @@ contract DeployKeeper is Script {
                 minResidual: minResidual,
                 apr: apr,
                 holdingDays: holdingDays,
-                minProcessingPercent: minProcessingPercent
+                minProcessingPercent: minProcessingPercent,
+                feeFraction: feeFraction
             })
         );
 

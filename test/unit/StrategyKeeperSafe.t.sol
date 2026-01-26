@@ -107,7 +107,8 @@ contract StrategyKeeperSafeTest is Test {
                     minResidual: 1_000e6,
                     apr: 0.121e18,
                     holdingDays: 28,
-                    minProcessingPercent: 0.01e18
+                    minProcessingPercent: 0.01e18,
+                    feeFraction: 11
                 })
             )
         );
@@ -166,7 +167,8 @@ contract StrategyKeeperSafeTest is Test {
                 minResidual: 1_000e6,
                 apr: 0.121e18,
                 holdingDays: 28,
-                minProcessingPercent: 0.01e18
+                minProcessingPercent: 0.01e18,
+                feeFraction: 11
             })
         );
         keeper.grantRole(keeper.KEEPER_ROLE(), keeperBot);
