@@ -20,17 +20,12 @@ contract DeployKeeper is Script {
     uint256 public minProcessingPercent = 0.01e18; // 1%
     uint256 public feeFraction = 11; // 1/11 to fee wallet, 10/11 to stream
 
-    // Borrower address (set this before deployment)
-    address public borrower = address(0); // TODO: Set to borrower address
-
     StrategyKeeper public keeperImplementation;
     StrategyKeeper public keeper;
     KeeperCompanion public companion;
 
     function run() external {
         MainnetStrategyActors actors = new MainnetStrategyActors();
-
-        require(borrower != address(0), "Borrower address not set");
 
         // Build config with temporary companion address
         IStrategyKeeper.KeeperConfig memory config = IStrategyKeeper.KeeperConfig({
@@ -39,7 +34,7 @@ contract DeployKeeper is Script {
             safe: actors.SAFE(),
             companion: address(1), // Temporary, will update after companion deployment
             baseAsset: MainnetKeeperContracts.USDC,
-            borrower: borrower,
+            borrower: MainnetKeeperContracts.BORROWER,
             feeWallet: MainnetKeeperContracts.FEE_WALLET,
             streamReceiver: MainnetKeeperContracts.REWARDS_SWEEPER, // Rewards sweeper receives Sablier streams
             sablier: MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR,
@@ -76,6 +71,9 @@ contract DeployKeeper is Script {
 
         vm.stopBroadcast();
 
+        // Save deployment to JSON
+        _saveDeployment(actors.ADMIN(), config);
+
         console.log("");
         console.log("=== Deployment Summary ===");
         console.log("StrategyKeeper Implementation:", address(keeperImplementation));
@@ -94,5 +92,41 @@ contract DeployKeeper is Script {
         console.log("2. Add KeeperCompanion as Safe owner:", address(companion));
         console.log("3. Grant PROCESSOR_ROLE to StrategyKeeper on vault");
         console.log("4. Grant KEEPER_ROLE to keeper bot address");
+        console.log("");
+        console.log("Deployment saved to: deployments/keeper-deployment.json");
+    }
+
+    function _saveDeployment(address admin, IStrategyKeeper.KeeperConfig memory config) internal {
+        string memory obj = "deployment";
+
+        // Deployed contracts
+        vm.serializeAddress(obj, "keeperImplementation", address(keeperImplementation));
+        vm.serializeAddress(obj, "keeperProxy", address(keeper));
+        vm.serializeAddress(obj, "companion", address(companion));
+        vm.serializeAddress(obj, "admin", admin);
+
+        // Configuration addresses
+        vm.serializeAddress(obj, "vault", config.vault);
+        vm.serializeAddress(obj, "targetStrategy", config.targetStrategy);
+        vm.serializeAddress(obj, "safe", config.safe);
+        vm.serializeAddress(obj, "baseAsset", config.baseAsset);
+        vm.serializeAddress(obj, "borrower", config.borrower);
+        vm.serializeAddress(obj, "feeWallet", config.feeWallet);
+        vm.serializeAddress(obj, "streamReceiver", config.streamReceiver);
+        vm.serializeAddress(obj, "sablier", config.sablier);
+
+        // Configuration values
+        vm.serializeUint(obj, "minThreshold", config.minThreshold);
+        vm.serializeUint(obj, "minResidual", config.minResidual);
+        vm.serializeUint(obj, "apr", config.apr);
+        vm.serializeUint(obj, "holdingDays", config.holdingDays);
+        vm.serializeUint(obj, "minProcessingPercent", config.minProcessingPercent);
+        vm.serializeUint(obj, "feeFraction", config.feeFraction);
+
+        // Metadata
+        vm.serializeUint(obj, "chainId", block.chainid);
+        string memory json = vm.serializeUint(obj, "deploymentTimestamp", block.timestamp);
+
+        vm.writeJson(json, "deployments/keeper-deployment.json");
     }
 }

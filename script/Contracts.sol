@@ -27,6 +27,9 @@ library MainnetKeeperContracts {
     /// @notice Rewards sweeper - receives Sablier streams for yield distribution
     address public constant REWARDS_SWEEPER = 0xbAC19FD66262629eEA13F1fd36ba9ae654bDfc76;
 
+    /// @notice Borrower address - receives principal from keeper disbursements
+    address public constant BORROWER = 0xaa7f79Bb105833D655D1C13C175142c44e209912;
+
     // ═══════════════════════════════════════════════════════════════════════════
     // EXTERNAL PROTOCOLS
     // ═══════════════════════════════════════════════════════════════════════════
