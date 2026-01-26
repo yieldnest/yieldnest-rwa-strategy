@@ -26,6 +26,8 @@ contract DeployKeeper is Script {
 
     function run() external {
         MainnetStrategyActors actors = new MainnetStrategyActors();
+        address admin = actors.ADMIN();
+        address deployer = msg.sender;
 
         // Build config with temporary companion address
         IStrategyKeeper.KeeperConfig memory config = IStrategyKeeper.KeeperConfig({
@@ -52,14 +54,14 @@ contract DeployKeeper is Script {
         keeperImplementation = new StrategyKeeper();
         console.log("StrategyKeeper implementation:", address(keeperImplementation));
 
-        // 2. Deploy proxy with temporary config
-        bytes memory initData = abi.encodeCall(StrategyKeeper.initialize, (actors.ADMIN(), config));
+        // 2. Deploy proxy with deployer as initial admin (so we can call setConfig)
+        bytes memory initData = abi.encodeCall(StrategyKeeper.initialize, (deployer, config));
 
         TransparentUpgradeableProxy proxy =
-            new TransparentUpgradeableProxy(address(keeperImplementation), actors.ADMIN(), initData);
+            new TransparentUpgradeableProxy(address(keeperImplementation), admin, initData);
         keeper = StrategyKeeper(address(proxy));
         console.log("StrategyKeeper proxy:", address(keeper));
-        console.log("Proxy admin:", actors.ADMIN());
+        console.log("Proxy admin:", admin);
 
         // 3. Deploy KeeperCompanion with keeper as owner
         companion = new KeeperCompanion(address(keeper));
@@ -69,10 +71,22 @@ contract DeployKeeper is Script {
         config.companion = address(companion);
         keeper.setConfig(config);
 
+        // 5. Transfer roles to admin and renounce deployer roles
+        bytes32 defaultAdminRole = keeper.DEFAULT_ADMIN_ROLE();
+        bytes32 configManagerRole = keeper.CONFIG_MANAGER_ROLE();
+
+        // Grant roles to admin
+        keeper.grantRole(defaultAdminRole, admin);
+        keeper.grantRole(configManagerRole, admin);
+
+        // Renounce deployer roles
+        keeper.renounceRole(configManagerRole, deployer);
+        keeper.renounceRole(defaultAdminRole, deployer);
+
         vm.stopBroadcast();
 
         // Save deployment to JSON
-        _saveDeployment(actors.ADMIN(), config);
+        _saveDeployment(admin, config);
 
         console.log("");
         console.log("=== Deployment Summary ===");
@@ -86,6 +100,10 @@ contract DeployKeeper is Script {
         console.log("Fee Wallet:", config.feeWallet);
         console.log("Stream Receiver (Rewards Sweeper):", config.streamReceiver);
         console.log("Borrower:", config.borrower);
+        console.log("");
+        console.log("=== Roles Transferred ===");
+        console.log("Admin:", admin);
+        console.log("Deployer renounced all roles");
         console.log("");
         console.log("=== Required Manual Steps ===");
         console.log("1. Add StrategyKeeper as Safe owner:", address(keeper));
