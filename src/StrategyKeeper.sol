@@ -200,7 +200,7 @@ contract StrategyKeeper is
         }
 
         // Condition 2: Time-based fallback with percentage check
-        // If 24h passed since last processing AND safe available >= minProcessingPercent of vault total
+        // If 24 hours have passed since the last processing AND the vault balance is at least minProcessingPercent of total assets
         if (block.timestamp >= s.lastProcessedTimestamp + FALLBACK_INTERVAL) {
             uint256 vaultTotalAssets = IERC4626(cfg.vault).totalAssets();
             uint256 minAmount = (vaultTotalAssets * cfg.minProcessingPercent) / PRECISION;
