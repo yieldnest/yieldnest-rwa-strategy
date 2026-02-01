@@ -85,4 +85,36 @@ interface IGnosisSafe {
     /// @param hash Hash to check
     /// @return 1 if approved, 0 otherwise
     function approvedHashes(address owner, bytes32 hash) external view returns (uint256);
+
+    /// @notice Execute a transaction as a module
+    /// @dev Modules are allowed to execute transactions without signatures
+    /// @param to Destination address
+    /// @param value Ether value
+    /// @param data Data payload
+    /// @param operation Operation type (Call or DelegateCall)
+    /// @return success Whether the transaction succeeded
+    function execTransactionFromModule(address to, uint256 value, bytes calldata data, Operation operation)
+        external
+        returns (bool success);
+
+    /// @notice Execute a transaction as a module and return data
+    /// @dev Modules are allowed to execute transactions without signatures
+    /// @param to Destination address
+    /// @param value Ether value
+    /// @param data Data payload
+    /// @param operation Operation type (Call or DelegateCall)
+    /// @return success Whether the transaction succeeded
+    /// @return returnData Data returned from the call
+    function execTransactionFromModuleReturnData(address to, uint256 value, bytes calldata data, Operation operation)
+        external
+        returns (bool success, bytes memory returnData);
+
+    /// @notice Check if an address is an enabled module
+    /// @param module Module address
+    /// @return Whether the address is an enabled module
+    function isModuleEnabled(address module) external view returns (bool);
+
+    /// @notice Enable a module for this Safe
+    /// @param module Module to enable
+    function enableModule(address module) external;
 }

@@ -10,7 +10,6 @@ import {SafeProxyFactory} from "lib/safe-smart-account/contracts/proxies/SafePro
 import {SafeProxy} from "lib/safe-smart-account/contracts/proxies/SafeProxy.sol";
 import {Enum} from "lib/safe-smart-account/contracts/libraries/Enum.sol";
 import {StrategyKeeper, IStrategyKeeper} from "src/StrategyKeeper.sol";
-import {KeeperCompanion} from "src/KeeperCompanion.sol";
 import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
 
 /// @title MockERC20
@@ -55,18 +54,14 @@ contract MockERC20 is IERC20 {
 }
 
 /// @title StrategyKeeperSafeTest
-/// @notice Tests for StrategyKeeper with a real Gnosis Safe
+/// @notice Tests for StrategyKeeper with a real Gnosis Safe using module execution
 contract StrategyKeeperSafeTest is Test {
-    /// @notice ERC-1271 magic value for isValidSignature(bytes32,bytes)
-    bytes4 internal constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
-
     MockERC20 public usdc;
     Safe public safe;
     Safe public safeSingleton;
     SafeProxyFactory public safeFactory;
     StrategyKeeper public keeper;
     StrategyKeeper public keeperImpl;
-    KeeperCompanion public companion;
 
     address public admin = address(0x1111);
     address public keeperBot = address(0x2222);
@@ -77,18 +72,20 @@ contract StrategyKeeperSafeTest is Test {
     address public streamReceiver = address(0x7777);
     address public sablier = address(0x8888);
 
-    // Additional EOA owners for the Safe
-    address public eoaOwner1 = address(0xAAAA);
-    address public eoaOwner2 = address(0xBBBB);
+    // EOA owner for the Safe
+    uint256 public eoaOwnerPk = 0xA11CE;
+    address public eoaOwner;
 
     function setUp() public {
+        eoaOwner = vm.addr(eoaOwnerPk);
+
         // Deploy mock USDC
         usdc = new MockERC20();
 
         // Deploy keeper implementation
         keeperImpl = new StrategyKeeper();
 
-        // Deploy keeper proxy with placeholder addresses
+        // Deploy keeper proxy with placeholder safe address
         bytes memory initData = abi.encodeCall(
             StrategyKeeper.initialize,
             (
@@ -97,7 +94,6 @@ contract StrategyKeeperSafeTest is Test {
                     vault: vault,
                     targetStrategy: targetStrategy,
                     safe: address(1), // Placeholder, will update
-                    companion: address(0xBEEF), // Placeholder
                     baseAsset: address(usdc),
                     borrower: borrower,
                     feeWallet: feeWallet,
@@ -116,27 +112,20 @@ contract StrategyKeeperSafeTest is Test {
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(keeperImpl), admin, initData);
         keeper = StrategyKeeper(address(proxy));
 
-        // Deploy companion with keeper as owner
-        companion = new KeeperCompanion(address(keeper));
-
         // Deploy Safe singleton and factory
         safeSingleton = new Safe();
         safeFactory = new SafeProxyFactory();
 
-        // Setup Safe owners (2/4 threshold)
-        address[] memory owners = new address[](4);
-        owners[0] = address(keeper);
-        owners[1] = address(companion);
-        owners[2] = eoaOwner1;
-        owners[3] = eoaOwner2;
-        _sortAddresses(owners);
+        // Setup Safe with 1 EOA owner and threshold 1
+        address[] memory owners = new address[](1);
+        owners[0] = eoaOwner;
 
         // Build Safe setup call
         bytes memory safeSetupData = abi.encodeCall(
             Safe.setup,
             (
                 owners,
-                2, // threshold
+                1, // threshold
                 address(0), // to (no delegate call)
                 "", // data
                 address(0), // fallbackHandler
@@ -150,14 +139,29 @@ contract StrategyKeeperSafeTest is Test {
         SafeProxy safeProxy = safeFactory.createProxyWithNonce(address(safeSingleton), safeSetupData, 0);
         safe = Safe(payable(address(safeProxy)));
 
-        // Update keeper config with correct addresses
+        // Enable keeper as a module on the Safe
+        // This requires executing a transaction from the Safe to call enableModule
+        bytes memory enableModuleData = abi.encodeWithSignature("enableModule(address)", address(keeper));
+        bytes32 txHash = safe.getTransactionHash(
+            address(safe), 0, enableModuleData, Enum.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
+        );
+
+        // Sign the transaction with EOA owner
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(eoaOwnerPk, txHash);
+        bytes memory signature = abi.encodePacked(r, s, v);
+
+        // Execute enableModule transaction
+        safe.execTransaction(
+            address(safe), 0, enableModuleData, Enum.Operation.Call, 0, 0, 0, address(0), payable(0), signature
+        );
+
+        // Update keeper config with correct safe address
         vm.startPrank(admin);
         keeper.setConfig(
             IStrategyKeeper.KeeperConfig({
                 vault: vault,
                 targetStrategy: targetStrategy,
                 safe: address(safe),
-                companion: address(companion),
                 baseAsset: address(usdc),
                 borrower: borrower,
                 feeWallet: feeWallet,
@@ -178,227 +182,81 @@ contract StrategyKeeperSafeTest is Test {
         usdc.mint(address(safe), 100_000e6);
     }
 
-    function _sortAddresses(address[] memory arr) internal pure {
-        for (uint256 i = 0; i < arr.length; i++) {
-            for (uint256 j = i + 1; j < arr.length; j++) {
-                if (uint160(arr[i]) > uint160(arr[j])) {
-                    address temp = arr[i];
-                    arr[i] = arr[j];
-                    arr[j] = temp;
-                }
-            }
-        }
+    /// @notice Test that keeper is enabled as a module on the Safe
+    function test_keeperIsModule() public view {
+        assertTrue(safe.isModuleEnabled(address(keeper)), "Keeper should be enabled as module");
     }
 
-    /// @notice Test that keeper and companion are Safe owners
+    /// @notice Test Safe ownership
     function test_safeOwnership() public view {
-        assertTrue(safe.isOwner(address(keeper)), "Keeper should be owner");
-        assertTrue(safe.isOwner(address(companion)), "Companion should be owner");
-        assertEq(safe.getThreshold(), 2, "Threshold should be 2");
-        assertEq(safe.getOwners().length, 4, "Should have 4 owners");
+        assertTrue(safe.isOwner(eoaOwner), "EOA should be owner");
+        assertEq(safe.getThreshold(), 1, "Threshold should be 1");
+        assertEq(safe.getOwners().length, 1, "Should have 1 owner");
     }
 
-    /// @notice Test ERC-1271 signature validation on keeper
-    function test_keeperIsValidSignature() public view {
-        bytes32 testHash = keccak256("test");
-
-        // Initially not approved
-        bytes4 result = keeper.isValidSignature(testHash, "");
-        assertEq(result, bytes4(0xffffffff), "Should not be valid initially");
-    }
-
-    /// @notice Test ERC-1271 signature validation on companion
-    function test_companionIsValidSignature() public {
-        bytes32 testHash = keccak256("test");
-
-        // Initially not approved
-        bytes4 result = companion.isValidSignature(testHash, "");
-        assertEq(result, bytes4(0xffffffff), "Should not be valid initially");
-
-        // Approve from keeper (companion owner)
-        vm.prank(address(keeper));
-        companion.approveHash(testHash);
-
-        // Now should be valid
-        result = companion.isValidSignature(testHash, "");
-        assertEq(result, ERC1271_MAGIC_VALUE, "Should be valid after approval");
-    }
-
-    /// @notice Test executing a Safe transaction with contract signatures
-    function test_safeExecutionWithContractSignatures() public {
+    /// @notice Test module execution for transfer
+    function test_moduleExecutionTransfer() public {
         uint256 transferAmount = 1000e6;
         address recipient = address(0xCAFE);
 
         uint256 recipientBalanceBefore = usdc.balanceOf(recipient);
         uint256 safeBalanceBefore = usdc.balanceOf(address(safe));
 
-        // Build transfer call
+        // Execute transfer as module - must be called FROM the keeper (which is the enabled module)
         bytes memory transferData = abi.encodeCall(IERC20.transfer, (recipient, transferAmount));
-
-        // Get transaction hash using Safe's method
-        bytes32 txHash = safe.getTransactionHash(
-            address(usdc), 0, transferData, Enum.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
-        );
-
-        // Approve hash on companion
         vm.prank(address(keeper));
-        companion.approveHash(txHash);
+        bool success = safe.execTransactionFromModule(address(usdc), 0, transferData, Enum.Operation.Call);
 
-        // Mock keeper's isValidSignature (bytes32, bytes) to return magic value
-        vm.mockCall(
-            address(keeper), abi.encodeWithSelector(ERC1271_MAGIC_VALUE, txHash, ""), abi.encode(ERC1271_MAGIC_VALUE)
-        );
-
-        // Build contract signatures for keeper and companion
-        bytes memory signatures = _buildContractSignatures(address(keeper), address(companion));
-
-        // Execute transaction
-        bool success = safe.execTransaction(
-            address(usdc), 0, transferData, Enum.Operation.Call, 0, 0, 0, address(0), payable(0), signatures
-        );
-
-        assertTrue(success, "Transaction should succeed");
+        assertTrue(success, "Module execution should succeed");
         assertEq(usdc.balanceOf(recipient), recipientBalanceBefore + transferAmount, "Recipient should receive tokens");
         assertEq(usdc.balanceOf(address(safe)), safeBalanceBefore - transferAmount, "Safe balance should decrease");
     }
 
-    /// @notice Test multiple Safe transactions in sequence
-    function test_multipleSafeTransactions() public {
+    /// @notice Test multiple module executions in sequence
+    function test_multipleModuleExecutions() public {
         address recipient1 = address(0xCAFE);
         address recipient2 = address(0xDEAD);
         uint256 amount1 = 500e6;
         uint256 amount2 = 300e6;
 
-        // First transaction
+        // First transfer - must be called FROM the keeper
         bytes memory transferData1 = abi.encodeCall(IERC20.transfer, (recipient1, amount1));
-        bytes32 txHash1 = safe.getTransactionHash(
-            address(usdc), 0, transferData1, Enum.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
-        );
-
         vm.prank(address(keeper));
-        companion.approveHash(txHash1);
+        bool success1 = safe.execTransactionFromModule(address(usdc), 0, transferData1, Enum.Operation.Call);
+        assertTrue(success1, "First transfer should succeed");
 
-        vm.mockCall(
-            address(keeper), abi.encodeWithSelector(ERC1271_MAGIC_VALUE, txHash1, ""), abi.encode(ERC1271_MAGIC_VALUE)
-        );
-
-        bytes memory signatures1 = _buildContractSignatures(address(keeper), address(companion));
-        bool success1 = safe.execTransaction(
-            address(usdc), 0, transferData1, Enum.Operation.Call, 0, 0, 0, address(0), payable(0), signatures1
-        );
-        assertTrue(success1, "First transaction should succeed");
-
-        // Second transaction (nonce incremented)
+        // Second transfer
         bytes memory transferData2 = abi.encodeCall(IERC20.transfer, (recipient2, amount2));
-        bytes32 txHash2 = safe.getTransactionHash(
-            address(usdc), 0, transferData2, Enum.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
-        );
-
         vm.prank(address(keeper));
-        companion.approveHash(txHash2);
-
-        vm.mockCall(
-            address(keeper), abi.encodeWithSelector(ERC1271_MAGIC_VALUE, txHash2, ""), abi.encode(ERC1271_MAGIC_VALUE)
-        );
-
-        bytes memory signatures2 = _buildContractSignatures(address(keeper), address(companion));
-        bool success2 = safe.execTransaction(
-            address(usdc), 0, transferData2, Enum.Operation.Call, 0, 0, 0, address(0), payable(0), signatures2
-        );
-        assertTrue(success2, "Second transaction should succeed");
+        bool success2 = safe.execTransactionFromModule(address(usdc), 0, transferData2, Enum.Operation.Call);
+        assertTrue(success2, "Second transfer should succeed");
 
         assertEq(usdc.balanceOf(recipient1), amount1, "Recipient1 should have correct balance");
         assertEq(usdc.balanceOf(recipient2), amount2, "Recipient2 should have correct balance");
-        assertEq(safe.nonce(), 2, "Nonce should be 2");
     }
 
-    /// @notice Test that unapproved signatures fail
-    function test_revertOnUnapprovedSignature() public {
+    /// @notice Test that non-module cannot execute transactions
+    function test_revertOnNonModuleExecution() public {
+        address nonModule = address(0xBEEF);
         bytes memory transferData = abi.encodeCall(IERC20.transfer, (address(0xCAFE), 100e6));
-        bytes32 txHash = safe.getTransactionHash(
-            address(usdc), 0, transferData, Enum.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
-        );
 
-        // Don't approve on companion, but mock keeper approval
-        vm.mockCall(
-            address(keeper), abi.encodeWithSelector(ERC1271_MAGIC_VALUE, txHash, ""), abi.encode(ERC1271_MAGIC_VALUE)
-        );
-
-        bytes memory signatures = _buildContractSignatures(address(keeper), address(companion));
-
-        // Should fail because companion hasn't approved
+        // Try to execute as non-module (should revert)
+        vm.prank(nonModule);
         vm.expectRevert();
-        safe.execTransaction(
-            address(usdc), 0, transferData, Enum.Operation.Call, 0, 0, 0, address(0), payable(0), signatures
-        );
+        safe.execTransactionFromModule(address(usdc), 0, transferData, Enum.Operation.Call);
     }
 
-    /// @notice Test signature ordering enforcement
-    function test_signatureOrdering() public view {
-        // Keeper and companion addresses should be in correct order
-        address lower;
-        address higher;
-        if (uint160(address(keeper)) < uint160(address(companion))) {
-            lower = address(keeper);
-            higher = address(companion);
-        } else {
-            lower = address(companion);
-            higher = address(keeper);
-        }
+    /// @notice Test module execution with return data
+    function test_moduleExecutionWithReturnData() public {
+        uint256 transferAmount = 1000e6;
+        address recipient = address(0xCAFE);
 
-        // Verify ordering is maintained in signature building
-        bytes memory signatures = _buildContractSignatures(address(keeper), address(companion));
+        bytes memory transferData = abi.encodeCall(IERC20.transfer, (recipient, transferAmount));
+        vm.prank(address(keeper));
+        (bool success, bytes memory returnData) =
+            safe.execTransactionFromModuleReturnData(address(usdc), 0, transferData, Enum.Operation.Call);
 
-        // Extract first signer address from r value
-        bytes32 r1;
-        assembly {
-            r1 := mload(add(signatures, 32))
-        }
-        address signer1 = address(uint160(uint256(r1)));
-        assertEq(signer1, lower, "First signer should be lower address");
-    }
-
-    /// @notice Build contract signatures for two contract signers
-    function _buildContractSignatures(address signer1, address signer2)
-        internal
-        pure
-        returns (bytes memory signatures)
-    {
-        // Sort signers
-        address lower;
-        address higher;
-        if (uint160(signer1) < uint160(signer2)) {
-            lower = signer1;
-            higher = signer2;
-        } else {
-            lower = signer2;
-            higher = signer1;
-        }
-
-        // Contract signature format:
-        // r (32 bytes) = verifying contract address (padded)
-        // s (32 bytes) = offset to signature data (from start of signatures)
-        // v (1 byte) = 0 (indicates contract signature)
-
-        // Static part: 2 * 65 = 130 bytes
-        // Dynamic data starts at offset 130
-
-        uint256 offset1 = 130;
-        uint256 offset2 = 162;
-
-        signatures = abi.encodePacked(
-            // First signer (lower address)
-            bytes32(uint256(uint160(lower))), // r = signer address
-            bytes32(offset1), // s = offset to data
-            uint8(0), // v = 0 for contract signature
-            // Second signer (higher address)
-            bytes32(uint256(uint160(higher))), // r = signer address
-            bytes32(offset2), // s = offset to data
-            uint8(0), // v = 0 for contract signature
-            // Dynamic data for first signer
-            bytes32(0), // length = 0
-            // Dynamic data for second signer
-            bytes32(0) // length = 0
-        );
+        assertTrue(success, "Module execution should succeed");
+        assertTrue(abi.decode(returnData, (bool)), "Transfer should return true");
     }
 }

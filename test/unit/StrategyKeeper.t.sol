@@ -5,15 +5,10 @@ import {Test, console} from "forge-std/Test.sol";
 import {TransparentUpgradeableProxy} from
     "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {StrategyKeeper, IStrategyKeeper} from "src/StrategyKeeper.sol";
-import {KeeperCompanion, IKeeperCompanion} from "src/KeeperCompanion.sol";
 
 contract StrategyKeeperTest is Test {
-    /// @notice ERC-1271 magic value for isValidSignature(bytes32,bytes)
-    bytes4 internal constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
-
     StrategyKeeper public keeper;
     StrategyKeeper public keeperImpl;
-    KeeperCompanion public companion;
 
     address public admin = address(0x1);
     address public keeperBot = address(0x2);
@@ -30,20 +25,15 @@ contract StrategyKeeperTest is Test {
         // Deploy implementation
         keeperImpl = new StrategyKeeper();
 
-        // Pre-compute the proxy address to deploy companion first
-        // We'll use a temporary companion address during init, then update
-        address tempCompanion = address(0xBEEF);
-
-        // Deploy proxy with temporary companion address (non-zero)
+        // Deploy proxy - use this contract (the test) as the initial deployer so we can grant roles
         bytes memory initData = abi.encodeCall(
             StrategyKeeper.initialize,
             (
-                admin,
+                address(this), // Use test contract as initial admin
                 IStrategyKeeper.KeeperConfig({
                     vault: vault,
                     targetStrategy: targetStrategy,
                     safe: safe,
-                    companion: tempCompanion, // Temporary non-zero address
                     baseAsset: baseAsset,
                     borrower: borrower,
                     feeWallet: feeWallet,
@@ -62,34 +52,14 @@ contract StrategyKeeperTest is Test {
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(keeperImpl), admin, initData);
         keeper = StrategyKeeper(address(proxy));
 
-        // Deploy companion with keeper as owner
-        companion = new KeeperCompanion(address(keeper));
-
-        // Update config with correct companion and grant roles
-        vm.startPrank(admin);
-        keeper.setConfig(
-            IStrategyKeeper.KeeperConfig({
-                vault: vault,
-                targetStrategy: targetStrategy,
-                safe: safe,
-                companion: address(companion),
-                baseAsset: baseAsset,
-                borrower: borrower,
-                feeWallet: feeWallet,
-                streamReceiver: streamReceiver,
-                sablier: sablier,
-                minThreshold: 10_000e6,
-                minResidual: 1_000e6,
-                apr: 0.121e18,
-                holdingDays: 28,
-                minProcessingPercent: 0.01e18,
-                feeFraction: 11
-            })
-        );
-
-        // Grant KEEPER_ROLE to bot
+        // Grant roles to admin and keeper bot
+        keeper.grantRole(keeper.DEFAULT_ADMIN_ROLE(), admin);
+        keeper.grantRole(keeper.CONFIG_MANAGER_ROLE(), admin);
         keeper.grantRole(keeper.KEEPER_ROLE(), keeperBot);
-        vm.stopPrank();
+
+        // Renounce the test contract's roles
+        keeper.renounceRole(keeper.CONFIG_MANAGER_ROLE(), address(this));
+        keeper.renounceRole(keeper.DEFAULT_ADMIN_ROLE(), address(this));
     }
 
     function test_initialization() public view {
@@ -97,7 +67,6 @@ contract StrategyKeeperTest is Test {
         assertEq(cfg.vault, vault);
         assertEq(cfg.targetStrategy, targetStrategy);
         assertEq(cfg.safe, safe);
-        assertEq(cfg.companion, address(companion));
         assertEq(cfg.baseAsset, baseAsset);
         assertEq(cfg.borrower, borrower);
         assertEq(cfg.feeWallet, feeWallet);
@@ -115,10 +84,6 @@ contract StrategyKeeperTest is Test {
         assertTrue(keeper.hasRole(keeper.KEEPER_ROLE(), keeperBot));
     }
 
-    function test_companionOwnership() public view {
-        assertEq(companion.owner(), address(keeper));
-    }
-
     function test_revertOnUnauthorizedKeeper() public {
         vm.prank(address(0xBEEF));
         vm.expectRevert();
@@ -133,7 +98,6 @@ contract StrategyKeeperTest is Test {
                 vault: vault,
                 targetStrategy: targetStrategy,
                 safe: safe,
-                companion: address(companion),
                 baseAsset: baseAsset,
                 borrower: borrower,
                 feeWallet: feeWallet,
@@ -157,7 +121,6 @@ contract StrategyKeeperTest is Test {
                 vault: address(0), // Zero address should revert
                 targetStrategy: targetStrategy,
                 safe: safe,
-                companion: address(companion),
                 baseAsset: baseAsset,
                 borrower: borrower,
                 feeWallet: feeWallet,
@@ -181,7 +144,6 @@ contract StrategyKeeperTest is Test {
                 vault: vault,
                 targetStrategy: targetStrategy,
                 safe: safe,
-                companion: address(companion),
                 baseAsset: baseAsset,
                 borrower: borrower,
                 feeWallet: feeWallet,
@@ -205,7 +167,6 @@ contract StrategyKeeperTest is Test {
                 vault: vault,
                 targetStrategy: targetStrategy,
                 safe: safe,
-                companion: address(companion),
                 baseAsset: baseAsset,
                 borrower: borrower,
                 feeWallet: feeWallet,
@@ -229,7 +190,6 @@ contract StrategyKeeperTest is Test {
                 vault: vault,
                 targetStrategy: targetStrategy,
                 safe: safe,
-                companion: address(companion),
                 baseAsset: baseAsset,
                 borrower: borrower,
                 feeWallet: feeWallet,
@@ -280,79 +240,5 @@ contract StrategyKeeperTest is Test {
         assertEq(fee + streamAmount, interest);
         assertApproxEqRel(fee, interest / 11, 0.01e18); // Within 1%
         assertApproxEqRel(streamAmount, (interest * 10) / 11, 0.01e18); // Within 1%
-    }
-}
-
-contract KeeperCompanionTest is Test {
-    /// @notice ERC-1271 magic value for isValidSignature(bytes32,bytes)
-    bytes4 internal constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
-
-    KeeperCompanion public companion;
-    address public keeper = address(0x1);
-    address public other = address(0x2);
-
-    function setUp() public {
-        companion = new KeeperCompanion(keeper);
-    }
-
-    function test_ownership() public view {
-        assertEq(companion.owner(), keeper);
-    }
-
-    function test_approveHash() public {
-        bytes32 hash = keccak256("test");
-
-        assertFalse(companion.isHashApproved(hash));
-
-        vm.prank(keeper);
-        companion.approveHash(hash);
-
-        assertTrue(companion.isHashApproved(hash));
-    }
-
-    function test_revokeHash() public {
-        bytes32 hash = keccak256("test");
-
-        vm.prank(keeper);
-        companion.approveHash(hash);
-        assertTrue(companion.isHashApproved(hash));
-
-        vm.prank(keeper);
-        companion.revokeHash(hash);
-        assertFalse(companion.isHashApproved(hash));
-    }
-
-    function test_isValidSignature() public {
-        bytes32 hash = keccak256("test");
-
-        // Not approved - should return invalid
-        bytes4 result = companion.isValidSignature(hash, "");
-        assertEq(result, bytes4(0xffffffff));
-
-        // Approve and check again
-        vm.prank(keeper);
-        companion.approveHash(hash);
-
-        result = companion.isValidSignature(hash, "");
-        assertEq(result, ERC1271_MAGIC_VALUE, "approved hash should return ERC1271_MAGIC_VALUE");
-    }
-
-    function test_revertOnUnauthorizedApprove() public {
-        bytes32 hash = keccak256("test");
-
-        vm.prank(other);
-        vm.expectRevert();
-        companion.approveHash(hash);
-    }
-
-    function test_revertOnUnauthorizedRevoke() public {
-        bytes32 hash = keccak256("test");
-
-        vm.prank(keeper);
-        companion.approveHash(hash);
-
-        vm.prank(other);
-        vm.expectRevert();
-        companion.revokeHash(hash);
     }
 }
