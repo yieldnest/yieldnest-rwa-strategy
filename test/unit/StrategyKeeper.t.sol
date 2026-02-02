@@ -56,8 +56,10 @@ contract StrategyKeeperTest is Test {
         keeper.grantRole(keeper.DEFAULT_ADMIN_ROLE(), admin);
         keeper.grantRole(keeper.CONFIG_MANAGER_ROLE(), admin);
         keeper.grantRole(keeper.KEEPER_ROLE(), keeperBot);
+        keeper.grantRole(keeper.PAUSER_ROLE(), admin);
 
         // Renounce the test contract's roles
+        keeper.renounceRole(keeper.PAUSER_ROLE(), address(this));
         keeper.renounceRole(keeper.CONFIG_MANAGER_ROLE(), address(this));
         keeper.renounceRole(keeper.DEFAULT_ADMIN_ROLE(), address(this));
     }
@@ -82,6 +84,7 @@ contract StrategyKeeperTest is Test {
         assertTrue(keeper.hasRole(keeper.DEFAULT_ADMIN_ROLE(), admin));
         assertTrue(keeper.hasRole(keeper.CONFIG_MANAGER_ROLE(), admin));
         assertTrue(keeper.hasRole(keeper.KEEPER_ROLE(), keeperBot));
+        assertTrue(keeper.hasRole(keeper.PAUSER_ROLE(), admin));
     }
 
     function test_revertOnUnauthorizedKeeper() public {
@@ -199,6 +202,125 @@ contract StrategyKeeperTest is Test {
                 minResidual: 1_000e6,
                 apr: 0.121e18,
                 holdingDays: 0, // Zero days should revert
+                minProcessingPercent: 0.01e18,
+                feeFraction: 11
+            })
+        );
+    }
+
+    function test_revertOnHoldingDaysExceedsMaximum() public {
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IStrategyKeeper.HoldingDaysExceedsMaximum.selector, 400, 365));
+        keeper.setConfig(
+            IStrategyKeeper.KeeperConfig({
+                vault: vault,
+                targetStrategy: targetStrategy,
+                safe: safe,
+                baseAsset: baseAsset,
+                borrower: borrower,
+                feeWallet: feeWallet,
+                streamReceiver: streamReceiver,
+                sablier: sablier,
+                minThreshold: 10_000e6,
+                minResidual: 1_000e6,
+                apr: 0.121e18,
+                holdingDays: 400, // Exceeds max of 365
+                minProcessingPercent: 0.01e18,
+                feeFraction: 11
+            })
+        );
+    }
+
+    function test_holdingDaysAtMaximum() public {
+        vm.prank(admin);
+        keeper.setConfig(
+            IStrategyKeeper.KeeperConfig({
+                vault: vault,
+                targetStrategy: targetStrategy,
+                safe: safe,
+                baseAsset: baseAsset,
+                borrower: borrower,
+                feeWallet: feeWallet,
+                streamReceiver: streamReceiver,
+                sablier: sablier,
+                minThreshold: 10_000e6,
+                minResidual: 1_000e6,
+                apr: 0.121e18,
+                holdingDays: 365, // Max allowed
+                minProcessingPercent: 0.01e18,
+                feeFraction: 11
+            })
+        );
+        assertEq(keeper.getConfig().holdingDays, 365);
+    }
+
+    function test_pauseAndUnpause() public {
+        // Should not be paused initially
+        assertFalse(keeper.paused());
+
+        // Pause
+        vm.prank(admin);
+        keeper.pause();
+        assertTrue(keeper.paused());
+
+        // Unpause
+        vm.prank(admin);
+        keeper.unpause();
+        assertFalse(keeper.paused());
+    }
+
+    function test_revertOnProcessInflowsWhenPaused() public {
+        // Pause the keeper
+        vm.prank(admin);
+        keeper.pause();
+
+        // Try to process inflows - should revert
+        vm.prank(keeperBot);
+        vm.expectRevert();
+        keeper.processInflows();
+    }
+
+    function test_revertOnUnauthorizedPause() public {
+        vm.prank(address(0xBEEF));
+        vm.expectRevert();
+        keeper.pause();
+    }
+
+    function test_revertOnUnauthorizedUnpause() public {
+        // First pause it
+        vm.prank(admin);
+        keeper.pause();
+
+        // Try to unpause without permission
+        vm.prank(address(0xBEEF));
+        vm.expectRevert();
+        keeper.unpause();
+    }
+
+    function test_configUpdatedEventEmitsDetails() public {
+        vm.prank(admin);
+        vm.expectEmit(true, true, false, true);
+        emit IStrategyKeeper.ConfigUpdated(
+            vault,
+            safe,
+            0.15e18, // new APR
+            30, // new holdingDays
+            11
+        );
+        keeper.setConfig(
+            IStrategyKeeper.KeeperConfig({
+                vault: vault,
+                targetStrategy: targetStrategy,
+                safe: safe,
+                baseAsset: baseAsset,
+                borrower: borrower,
+                feeWallet: feeWallet,
+                streamReceiver: streamReceiver,
+                sablier: sablier,
+                minThreshold: 10_000e6,
+                minResidual: 1_000e6,
+                apr: 0.15e18,
+                holdingDays: 30,
                 minProcessingPercent: 0.01e18,
                 feeFraction: 11
             })

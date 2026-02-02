@@ -6,6 +6,7 @@ import {AccessControlEnumerableUpgradeable} from
     "lib/openzeppelin-contracts-upgradeable/contracts/access/extensions/AccessControlEnumerableUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from
     "lib/openzeppelin-contracts-upgradeable/contracts/utils/ReentrancyGuardUpgradeable.sol";
+import {PausableUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/utils/PausableUpgradeable.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 import {SafeERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -40,6 +41,8 @@ interface IStrategyKeeper {
     error SafeExecutionFailed();
     error InvalidConfiguration();
     error NoFundsToProcess();
+    error StreamAmountExceedsUint128(uint256 amount);
+    error HoldingDaysExceedsMaximum(uint256 holdingDays, uint256 maximum);
 
     event KeeperExecuted(
         uint256 indexed timestamp,
@@ -50,7 +53,9 @@ interface IStrategyKeeper {
         uint256 fee,
         uint256 streamAmount
     );
-    event ConfigUpdated();
+    event ConfigUpdated(
+        address indexed vault, address indexed safe, uint256 apr, uint256 holdingDays, uint256 feeFraction
+    );
 }
 
 /// @title StrategyKeeper
@@ -62,7 +67,8 @@ contract StrategyKeeper is
     IStrategyKeeper,
     Initializable,
     AccessControlEnumerableUpgradeable,
-    ReentrancyGuardUpgradeable
+    ReentrancyGuardUpgradeable,
+    PausableUpgradeable
 {
     using SafeERC20 for IERC20;
 
@@ -72,6 +78,9 @@ contract StrategyKeeper is
     /// @notice Role required to update configuration
     bytes32 public constant CONFIG_MANAGER_ROLE = keccak256("CONFIG_MANAGER_ROLE");
 
+    /// @notice Role required to pause/unpause the contract
+    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
+
     /// @notice Precision for percentage calculations (1e18 = 100%)
     uint256 public constant PRECISION = 1e18;
 
@@ -80,6 +89,9 @@ contract StrategyKeeper is
 
     /// @notice Time interval for fallback processing (24 hours)
     uint256 public constant FALLBACK_INTERVAL = 24 hours;
+
+    /// @notice Maximum holding days (1 year)
+    uint256 public constant MAX_HOLDING_DAYS = 365;
 
     /// @notice Storage slot for keeper data
     bytes32 private constant KEEPER_STORAGE_SLOT = keccak256("yieldnest.storage.strategyKeeper");
@@ -111,16 +123,18 @@ contract StrategyKeeper is
 
         __AccessControlEnumerable_init();
         __ReentrancyGuard_init();
+        __Pausable_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(CONFIG_MANAGER_ROLE, admin);
+        _grantRole(PAUSER_ROLE, admin);
 
         _setConfig(config_);
     }
 
     /// @notice Execute the keeper logic to process inflows
     /// @dev Requires KEEPER_ROLE. All-or-nothing execution.
-    function processInflows() external onlyRole(KEEPER_ROLE) nonReentrant {
+    function processInflows() external onlyRole(KEEPER_ROLE) nonReentrant whenNotPaused {
         KeeperStorage storage s = _getKeeperStorage();
         KeeperConfig memory cfg = s.config;
 
@@ -248,6 +262,9 @@ contract StrategyKeeper is
     /// @param cfg Keeper configuration
     /// @param amount Amount to stream
     function _createSablierStream(KeeperConfig memory cfg, uint256 amount) internal {
+        // Validate amount fits in uint128 (Sablier requirement)
+        if (amount > type(uint128).max) revert StreamAmountExceedsUint128(amount);
+
         // First approve Sablier to spend the stream amount
         bytes memory approveData = abi.encodeCall(IERC20.approve, (cfg.sablier, amount));
         _executeSafeTransaction(cfg, cfg.baseAsset, 0, approveData);
@@ -310,17 +327,32 @@ contract StrategyKeeper is
         if (config_.sablier == address(0)) revert ZeroAddress();
         if (config_.apr == 0 || config_.apr > PRECISION) revert InvalidConfiguration();
         if (config_.holdingDays == 0) revert InvalidConfiguration();
+        if (config_.holdingDays > MAX_HOLDING_DAYS) {
+            revert HoldingDaysExceedsMaximum(config_.holdingDays, MAX_HOLDING_DAYS);
+        }
         if (config_.minProcessingPercent > PRECISION) revert InvalidConfiguration();
         if (config_.feeFraction < 2) revert InvalidConfiguration();
 
         _getKeeperStorage().config = config_;
-        emit ConfigUpdated();
+        emit ConfigUpdated(config_.vault, config_.safe, config_.apr, config_.holdingDays, config_.feeFraction);
     }
 
     /// @notice Get the current configuration
     /// @return config The current keeper configuration
     function getConfig() external view returns (KeeperConfig memory config) {
         return _getKeeperStorage().config;
+    }
+
+    /// @notice Pause the keeper
+    /// @dev Only callable by PAUSER_ROLE
+    function pause() external onlyRole(PAUSER_ROLE) {
+        _pause();
+    }
+
+    /// @notice Unpause the keeper
+    /// @dev Only callable by PAUSER_ROLE
+    function unpause() external onlyRole(PAUSER_ROLE) {
+        _unpause();
     }
 }
 

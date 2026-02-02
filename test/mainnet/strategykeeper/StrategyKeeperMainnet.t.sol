@@ -206,6 +206,7 @@ contract StrategyKeeperMainnetTest is Test {
         assertTrue(keeper.hasRole(keeper.DEFAULT_ADMIN_ROLE(), admin), "admin should have DEFAULT_ADMIN_ROLE");
         assertTrue(keeper.hasRole(keeper.CONFIG_MANAGER_ROLE(), admin), "admin should have CONFIG_MANAGER_ROLE");
         assertTrue(keeper.hasRole(keeper.KEEPER_ROLE(), keeperBot), "keeperBot should have KEEPER_ROLE");
+        assertTrue(keeper.hasRole(keeper.PAUSER_ROLE(), admin), "admin should have PAUSER_ROLE");
     }
 
     function test_vaultExists() public view {
