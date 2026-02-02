@@ -87,7 +87,7 @@ contract StrategyKeeperMainnetTest is Test {
                     minThreshold: 10_000e6,
                     minResidual: 1_000e6,
                     apr: 0.121e18,
-                    holdingDays: 28,
+                    holdingPeriod: 28 days,
                     minProcessingPercent: 0.01e18, // 1%
                     feeFraction: 11
                 })
@@ -115,7 +115,7 @@ contract StrategyKeeperMainnetTest is Test {
                 minThreshold: 10_000e6,
                 minResidual: 1_000e6,
                 apr: 0.121e18,
-                holdingDays: 28,
+                holdingPeriod: 28 days,
                 minProcessingPercent: 0.01e18, // 1%
                 feeFraction: 11
             })
@@ -187,7 +187,7 @@ contract StrategyKeeperMainnetTest is Test {
         assertEq(cfg.minThreshold, 10_000e6, "minThreshold mismatch");
         assertEq(cfg.minResidual, 1_000e6, "minResidual mismatch");
         assertEq(cfg.apr, 0.121e18, "apr mismatch");
-        assertEq(cfg.holdingDays, 28, "holdingDays mismatch");
+        assertEq(cfg.holdingPeriod, 28 days, "holdingPeriod mismatch");
         assertEq(cfg.minProcessingPercent, 0.01e18, "minProcessingPercent mismatch");
     }
 
@@ -232,9 +232,11 @@ contract StrategyKeeperMainnetTest is Test {
         // 100000 * 0.121 * 28 / 365 = 928.22
         uint256 available = 100_000e6;
         uint256 apr = 0.121e18;
-        uint256 holdingDays = 28;
+        uint256 holdingPeriod = 28 days;
+        uint256 SECONDS_PER_YEAR = 365 days;
+        uint256 PRECISION = 1e18;
 
-        uint256 interest = (available * apr * holdingDays) / 365 / 1e18;
+        uint256 interest = (available * apr * holdingPeriod) / SECONDS_PER_YEAR / PRECISION;
 
         assertApproxEqAbs(interest, 928_219_178, 1e3, "interest calculation mismatch");
 
@@ -283,9 +285,9 @@ contract StrategyKeeperMainnetTest is Test {
         keeper.setConfig(cfg);
     }
 
-    function test_configValidation_zeroHoldingDays() public {
+    function test_configValidation_zeroHoldingPeriod() public {
         IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
-        cfg.holdingDays = 0;
+        cfg.holdingPeriod = 0;
 
         vm.prank(admin);
         vm.expectRevert(IStrategyKeeper.InvalidConfiguration.selector);
@@ -306,14 +308,14 @@ contract StrategyKeeperMainnetTest is Test {
         // Calculate expected amounts
         IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
         uint256 available = safeBalanceBefore - cfg.minResidual;
-        uint256 interest = (available * cfg.apr * cfg.holdingDays) / 365 / 1e18;
+        uint256 interest = (available * cfg.apr * cfg.holdingPeriod) / 365 days / 1e18;
         uint256 principal = available - interest;
         uint256 fee = interest / cfg.feeFraction;
         uint256 streamAmount = interest - fee;
 
         // Record timestamp for stream verification
         uint256 expectedStartTime = block.timestamp;
-        uint256 expectedEndTime = block.timestamp + cfg.holdingDays * 1 days;
+        uint256 expectedEndTime = block.timestamp + cfg.holdingPeriod;
 
         // Execute processInflows
         vm.prank(keeperBot);
@@ -365,7 +367,7 @@ contract StrategyKeeperMainnetTest is Test {
                 minThreshold: type(uint256).max, // Skip vault allocation
                 minResidual: 100_000e6, // Set minResidual equal to safe balance
                 apr: 0.121e18,
-                holdingDays: 28,
+                holdingPeriod: 28 days,
                 minProcessingPercent: 0.01e18,
                 feeFraction: 11
             })
@@ -396,7 +398,7 @@ contract StrategyKeeperMainnetTest is Test {
                 minThreshold: type(uint256).max, // Skip vault threshold condition
                 minResidual: 100_000e6, // Equal to safe balance
                 apr: 0.121e18,
-                holdingDays: 28,
+                holdingPeriod: 28 days,
                 minProcessingPercent: 0.5e18, // 50% - vault balance (77K) < 50% of totalAssets (~1.77M) = ~885K
                 feeFraction: 11
             })
@@ -434,7 +436,7 @@ contract StrategyKeeperMainnetTest is Test {
                 minThreshold: type(uint256).max,
                 minResidual: 1_000e6,
                 apr: 0.121e18,
-                holdingDays: 28,
+                holdingPeriod: 28 days,
                 minProcessingPercent: 0.01e18, // 1%
                 feeFraction: 11
             })
@@ -482,7 +484,7 @@ contract StrategyKeeperMainnetTest is Test {
                 minThreshold: type(uint256).max,
                 minResidual: 99_999e6, // Only 1e6 available
                 apr: 0.121e18,
-                holdingDays: 28,
+                holdingPeriod: 28 days,
                 minProcessingPercent: 0.5e18, // 50% - way higher than available
                 feeFraction: 11
             })
@@ -515,7 +517,7 @@ contract StrategyKeeperMainnetTest is Test {
                 minThreshold: type(uint256).max,
                 minResidual: 1_000e6,
                 apr: 0.121e18,
-                holdingDays: 28,
+                holdingPeriod: 28 days,
                 minProcessingPercent: 0.01e18,
                 feeFraction: 11
             })

@@ -30,7 +30,7 @@ interface IStrategyKeeper {
         uint256 minThreshold; // Minimum vault balance to trigger allocation
         uint256 minResidual; // Minimum to keep in Safe after disbursement
         uint256 apr; // APR where 1e18 = 100%
-        uint256 holdingDays; // Days of yield to hold in advance (e.g., 28)
+        uint256 holdingPeriod; // Duration in seconds to hold yield in advance (e.g., 28 days = 2419200)
         uint256 minProcessingPercent; // Min % of vault total for time-based fallback (1e18 = 100%)
         uint256 feeFraction; // Fee denominator (e.g., 11 means 1/11 to fee wallet, 10/11 to stream)
     }
@@ -42,7 +42,7 @@ interface IStrategyKeeper {
     error InvalidConfiguration();
     error NoFundsToProcess();
     error StreamAmountExceedsUint128(uint256 amount);
-    error HoldingDaysExceedsMaximum(uint256 holdingDays, uint256 maximum);
+    error HoldingPeriodExceedsMaximum(uint256 holdingPeriod, uint256 maximum);
 
     event KeeperExecuted(
         uint256 indexed timestamp,
@@ -54,7 +54,7 @@ interface IStrategyKeeper {
         uint256 streamAmount
     );
     event ConfigUpdated(
-        address indexed vault, address indexed safe, uint256 apr, uint256 holdingDays, uint256 feeFraction
+        address indexed vault, address indexed safe, uint256 apr, uint256 holdingPeriod, uint256 feeFraction
     );
 }
 
@@ -84,14 +84,14 @@ contract StrategyKeeper is
     /// @notice Precision for percentage calculations (1e18 = 100%)
     uint256 public constant PRECISION = 1e18;
 
-    /// @notice Days per year for APR calculation
-    uint256 public constant DAYS_PER_YEAR = 365;
+    /// @notice Seconds per year for APR calculation (365 days)
+    uint256 public constant SECONDS_PER_YEAR = 365 days;
 
     /// @notice Time interval for fallback processing (24 hours)
     uint256 public constant FALLBACK_INTERVAL = 24 hours;
 
-    /// @notice Maximum holding days (1 year)
-    uint256 public constant MAX_HOLDING_DAYS = 365;
+    /// @notice Maximum holding period (1 year in seconds)
+    uint256 public constant MAX_HOLDING_PERIOD = 365 days;
 
     /// @notice Storage slot for keeper data
     bytes32 private constant KEEPER_STORAGE_SLOT = keccak256("yieldnest.storage.strategyKeeper");
@@ -153,8 +153,8 @@ contract StrategyKeeper is
         uint256 available = safeBalance - cfg.minResidual;
 
         // 4. Calculate yield holdback
-        // interest = available * apr * holdingDays / 365 / PRECISION
-        uint256 interest = (available * cfg.apr * cfg.holdingDays) / DAYS_PER_YEAR / PRECISION;
+        // interest = available * apr * holdingPeriod / SECONDS_PER_YEAR / PRECISION
+        uint256 interest = (available * cfg.apr * cfg.holdingPeriod) / SECONDS_PER_YEAR / PRECISION;
         uint256 principal = available - interest;
 
         // 5. Calculate fee split: 1/feeFraction to fee wallet, (feeFraction-1)/feeFraction to stream
@@ -279,7 +279,7 @@ contract StrategyKeeper is
             transferable: true,
             timestamps: ISablierLockupLinear.Timestamps({
                 start: uint40(block.timestamp),
-                end: uint40(block.timestamp + cfg.holdingDays * 1 days)
+                end: uint40(block.timestamp + cfg.holdingPeriod)
             }),
             shape: ""
         });
@@ -326,15 +326,15 @@ contract StrategyKeeper is
         if (config_.streamReceiver == address(0)) revert ZeroAddress();
         if (config_.sablier == address(0)) revert ZeroAddress();
         if (config_.apr == 0 || config_.apr > PRECISION) revert InvalidConfiguration();
-        if (config_.holdingDays == 0) revert InvalidConfiguration();
-        if (config_.holdingDays > MAX_HOLDING_DAYS) {
-            revert HoldingDaysExceedsMaximum(config_.holdingDays, MAX_HOLDING_DAYS);
+        if (config_.holdingPeriod == 0) revert InvalidConfiguration();
+        if (config_.holdingPeriod > MAX_HOLDING_PERIOD) {
+            revert HoldingPeriodExceedsMaximum(config_.holdingPeriod, MAX_HOLDING_PERIOD);
         }
         if (config_.minProcessingPercent > PRECISION) revert InvalidConfiguration();
         if (config_.feeFraction < 2) revert InvalidConfiguration();
 
         _getKeeperStorage().config = config_;
-        emit ConfigUpdated(config_.vault, config_.safe, config_.apr, config_.holdingDays, config_.feeFraction);
+        emit ConfigUpdated(config_.vault, config_.safe, config_.apr, config_.holdingPeriod, config_.feeFraction);
     }
 
     /// @notice Get the current configuration

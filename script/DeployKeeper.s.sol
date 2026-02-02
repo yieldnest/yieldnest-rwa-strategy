@@ -15,7 +15,7 @@ contract DeployKeeper is Script {
     uint256 public minThreshold = 10_000e6; // 10,000 USDC minimum to trigger allocation
     uint256 public minResidual = 1_000e6; // Keep 1,000 USDC in Safe
     uint256 public apr = 0.121e18; // 12.1% APR
-    uint256 public holdingDays = 28;
+    uint256 public holdingPeriod = 28 days;
     uint256 public minProcessingPercent = 0.01e18; // 1%
     uint256 public feeFraction = 11; // 1/11 to fee wallet, 10/11 to stream
 
@@ -40,7 +40,7 @@ contract DeployKeeper is Script {
             minThreshold: minThreshold,
             minResidual: minResidual,
             apr: apr,
-            holdingDays: holdingDays,
+            holdingPeriod: holdingPeriod,
             minProcessingPercent: minProcessingPercent,
             feeFraction: feeFraction
         });
@@ -125,7 +125,7 @@ contract DeployKeeper is Script {
         vm.serializeUint(obj, "minThreshold", config.minThreshold);
         vm.serializeUint(obj, "minResidual", config.minResidual);
         vm.serializeUint(obj, "apr", config.apr);
-        vm.serializeUint(obj, "holdingDays", config.holdingDays);
+        vm.serializeUint(obj, "holdingPeriod", config.holdingPeriod);
         vm.serializeUint(obj, "minProcessingPercent", config.minProcessingPercent);
         vm.serializeUint(obj, "feeFraction", config.feeFraction);
 

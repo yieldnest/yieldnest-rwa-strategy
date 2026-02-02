@@ -102,7 +102,7 @@ contract StrategyKeeperSafeTest is Test {
                     minThreshold: 10_000e6,
                     minResidual: 1_000e6,
                     apr: 0.121e18,
-                    holdingDays: 28,
+                    holdingPeriod: 28 days,
                     minProcessingPercent: 0.01e18,
                     feeFraction: 11
                 })
@@ -170,7 +170,7 @@ contract StrategyKeeperSafeTest is Test {
                 minThreshold: 10_000e6,
                 minResidual: 1_000e6,
                 apr: 0.121e18,
-                holdingDays: 28,
+                holdingPeriod: 28 days,
                 minProcessingPercent: 0.01e18,
                 feeFraction: 11
             })

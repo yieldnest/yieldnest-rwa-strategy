@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 pragma solidity ^0.8.28;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {TransparentUpgradeableProxy} from
     "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {StrategyKeeper, IStrategyKeeper} from "src/StrategyKeeper.sol";
@@ -20,6 +20,9 @@ contract StrategyKeeperTest is Test {
     address public feeWallet = address(0x8);
     address public streamReceiver = address(0x9);
     address public sablier = address(0xA);
+
+    // 28 days in seconds
+    uint256 constant TWENTY_EIGHT_DAYS = 28 days;
 
     function setUp() public {
         // Deploy implementation
@@ -42,7 +45,7 @@ contract StrategyKeeperTest is Test {
                     minThreshold: 10_000e6,
                     minResidual: 1_000e6,
                     apr: 0.121e18,
-                    holdingDays: 28,
+                    holdingPeriod: TWENTY_EIGHT_DAYS,
                     minProcessingPercent: 0.01e18,
                     feeFraction: 11
                 })
@@ -77,7 +80,7 @@ contract StrategyKeeperTest is Test {
         assertEq(cfg.minThreshold, 10_000e6);
         assertEq(cfg.minResidual, 1_000e6);
         assertEq(cfg.apr, 0.121e18);
-        assertEq(cfg.holdingDays, 28);
+        assertEq(cfg.holdingPeriod, TWENTY_EIGHT_DAYS);
     }
 
     function test_roles() public view {
@@ -109,7 +112,7 @@ contract StrategyKeeperTest is Test {
                 minThreshold: 10_000e6,
                 minResidual: 1_000e6,
                 apr: 0.121e18,
-                holdingDays: 28,
+                holdingPeriod: TWENTY_EIGHT_DAYS,
                 minProcessingPercent: 0.01e18,
                 feeFraction: 11
             })
@@ -132,7 +135,7 @@ contract StrategyKeeperTest is Test {
                 minThreshold: 10_000e6,
                 minResidual: 1_000e6,
                 apr: 0.121e18,
-                holdingDays: 28,
+                holdingPeriod: TWENTY_EIGHT_DAYS,
                 minProcessingPercent: 0.01e18,
                 feeFraction: 11
             })
@@ -155,7 +158,7 @@ contract StrategyKeeperTest is Test {
                 minThreshold: 10_000e6,
                 minResidual: 1_000e6,
                 apr: 0, // Zero APR should revert
-                holdingDays: 28,
+                holdingPeriod: TWENTY_EIGHT_DAYS,
                 minProcessingPercent: 0.01e18,
                 feeFraction: 11
             })
@@ -178,14 +181,14 @@ contract StrategyKeeperTest is Test {
                 minThreshold: 10_000e6,
                 minResidual: 1_000e6,
                 apr: 2e18, // 200% APR exceeds max (100%)
-                holdingDays: 28,
+                holdingPeriod: TWENTY_EIGHT_DAYS,
                 minProcessingPercent: 0.01e18,
                 feeFraction: 11
             })
         );
     }
 
-    function test_revertOnZeroHoldingDays() public {
+    function test_revertOnZeroHoldingPeriod() public {
         vm.prank(admin);
         vm.expectRevert(IStrategyKeeper.InvalidConfiguration.selector);
         keeper.setConfig(
@@ -201,16 +204,17 @@ contract StrategyKeeperTest is Test {
                 minThreshold: 10_000e6,
                 minResidual: 1_000e6,
                 apr: 0.121e18,
-                holdingDays: 0, // Zero days should revert
+                holdingPeriod: 0, // Zero should revert
                 minProcessingPercent: 0.01e18,
                 feeFraction: 11
             })
         );
     }
 
-    function test_revertOnHoldingDaysExceedsMaximum() public {
+    function test_revertOnHoldingPeriodExceedsMaximum() public {
+        uint256 tooLong = 366 days; // Exceeds max of 365 days
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(IStrategyKeeper.HoldingDaysExceedsMaximum.selector, 400, 365));
+        vm.expectRevert(abi.encodeWithSelector(IStrategyKeeper.HoldingPeriodExceedsMaximum.selector, tooLong, 365 days));
         keeper.setConfig(
             IStrategyKeeper.KeeperConfig({
                 vault: vault,
@@ -224,14 +228,14 @@ contract StrategyKeeperTest is Test {
                 minThreshold: 10_000e6,
                 minResidual: 1_000e6,
                 apr: 0.121e18,
-                holdingDays: 400, // Exceeds max of 365
+                holdingPeriod: tooLong,
                 minProcessingPercent: 0.01e18,
                 feeFraction: 11
             })
         );
     }
 
-    function test_holdingDaysAtMaximum() public {
+    function test_holdingPeriodAtMaximum() public {
         vm.prank(admin);
         keeper.setConfig(
             IStrategyKeeper.KeeperConfig({
@@ -246,12 +250,12 @@ contract StrategyKeeperTest is Test {
                 minThreshold: 10_000e6,
                 minResidual: 1_000e6,
                 apr: 0.121e18,
-                holdingDays: 365, // Max allowed
+                holdingPeriod: 365 days, // Max allowed
                 minProcessingPercent: 0.01e18,
                 feeFraction: 11
             })
         );
-        assertEq(keeper.getConfig().holdingDays, 365);
+        assertEq(keeper.getConfig().holdingPeriod, 365 days);
     }
 
     function test_pauseAndUnpause() public {
@@ -298,15 +302,10 @@ contract StrategyKeeperTest is Test {
     }
 
     function test_configUpdatedEventEmitsDetails() public {
+        uint256 newHoldingPeriod = 30 days;
         vm.prank(admin);
         vm.expectEmit(true, true, false, true);
-        emit IStrategyKeeper.ConfigUpdated(
-            vault,
-            safe,
-            0.15e18, // new APR
-            30, // new holdingDays
-            11
-        );
+        emit IStrategyKeeper.ConfigUpdated(vault, safe, 0.15e18, newHoldingPeriod, 11);
         keeper.setConfig(
             IStrategyKeeper.KeeperConfig({
                 vault: vault,
@@ -320,7 +319,7 @@ contract StrategyKeeperTest is Test {
                 minThreshold: 10_000e6,
                 minResidual: 1_000e6,
                 apr: 0.15e18,
-                holdingDays: 30,
+                holdingPeriod: newHoldingPeriod,
                 minProcessingPercent: 0.01e18,
                 feeFraction: 11
             })
@@ -329,7 +328,7 @@ contract StrategyKeeperTest is Test {
 
     function test_yieldCalculation() public pure {
         // Test the yield calculation formula:
-        // interest = available * apr * holdingDays / 365 / PRECISION
+        // interest = available * apr * holdingPeriod / SECONDS_PER_YEAR / PRECISION
         //
         // Example from spec:
         // Amount: 34,500 USDC
@@ -339,19 +338,13 @@ contract StrategyKeeperTest is Test {
 
         uint256 available = 34_500e6; // 34,500 USDC (6 decimals)
         uint256 apr = 0.121e18; // 12.1%
-        uint256 holdingDays = 28;
+        uint256 holdingPeriod = 28 days; // 28 days in seconds
         uint256 PRECISION = 1e18;
-        uint256 DAYS_PER_YEAR = 365;
+        uint256 SECONDS_PER_YEAR = 365 days;
 
-        uint256 interest = (available * apr * holdingDays) / DAYS_PER_YEAR / PRECISION;
+        uint256 interest = (available * apr * holdingPeriod) / SECONDS_PER_YEAR / PRECISION;
 
         // Expected: ~320.24 USDC = 320_235_616 (6 decimals)
-        // Our calculation: 34500e6 * 121e15 * 28 / 365 / 1e18
-        //                = 34500 * 121 * 28 * 1e6 * 1e15 / 365 / 1e18
-        //                = 34500 * 121 * 28 * 1e6 / 365 / 1e3
-        //                = 116886000 * 1e6 / 365000
-        //                = 320235616 (rounding may differ slightly)
-
         // Allow for small rounding difference
         assertApproxEqAbs(interest, 320_235_616, 1e3); // Within 0.001 USDC
 
