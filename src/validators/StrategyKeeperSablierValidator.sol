@@ -14,6 +14,8 @@ import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.so
 ///      - stream must be cancelable
 ///      - stream must be transferable
 contract StrategyKeeperSablierValidator is IValidator {
+    string public constant VERSION = "0.1.0";
+
     /*//////////////////////////////////////////////////////////////
                                  ERRORS
     //////////////////////////////////////////////////////////////*/
