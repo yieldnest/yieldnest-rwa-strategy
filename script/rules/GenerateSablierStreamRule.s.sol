@@ -39,16 +39,21 @@ contract GenerateSablierStreamRule is Script {
         console.log("  Validator:", address(ruleParams.rule.validator));
         console.log("  Param Rules Count:", ruleParams.rule.paramRules.length);
 
-        if (!Prompt.forConfirmation("Set this rule on the vault?")) {
-            console.log("Aborted.");
-            return;
-        }
+        // Build arrays for setProcessorRules
+        address[] memory targets = new address[](1);
+        bytes4[] memory funcSigs = new bytes4[](1);
+        IVault.FunctionRule[] memory rules = new IVault.FunctionRule[](1);
 
-        vm.startBroadcast();
-        IVault(vault).setProcessorRule(ruleParams.contractAddress, ruleParams.funcSig, ruleParams.rule);
-        vm.stopBroadcast();
+        targets[0] = ruleParams.contractAddress;
+        funcSigs[0] = ruleParams.funcSig;
+        rules[0] = ruleParams.rule;
+
+        // Generate calldata for setProcessorRules
+        bytes memory callData = abi.encodeCall(IVault.setProcessorRules, (targets, funcSigs, rules));
 
         console.log("");
-        console.log("Rule set successfully on vault!");
+        console.log("=== Calldata for setProcessorRules ===");
+        console.log("Target: ", vault);
+        console.logBytes(callData);
     }
 }

@@ -4,35 +4,30 @@ pragma solidity ^0.8.24;
 import {Script, console} from "forge-std/Script.sol";
 import {IVault} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/src/interface/IVault.sol";
 import {SablierRules} from "@script/rules/SablierRules.sol";
-import {MainnetKeeperContracts} from "@script/Contracts.sol";
 import {Prompt} from "@script/utils/Prompt.sol";
 
-/// @title GenerateSablierTransferRule
-/// @notice Script to generate and set the Sablier stream NFT transfer rule on a vault
-/// @dev Run with: forge script script/rules/GenerateSablierTransferRule.s.sol
-contract GenerateSablierTransferRule is Script {
+/// @title GenerateTransferRule
+/// @notice Script to generate and set an ERC20 transfer rule on a vault
+/// @dev Run with: forge script script/rules/GenerateTransferRule.s.sol
+contract GenerateTransferRule is Script {
     function run() public {
-        console.log("=== Generate Sablier Stream Transfer Rule ===");
-        console.log("");
-        console.log("Using Sablier LockupLinear:", MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR);
+        console.log("=== Generate ERC20 Transfer Rule ===");
         console.log("");
 
         address vault = Prompt.forAddress("Enter vault address");
-        address from = Prompt.forAddress("Enter from address (stream owner, typically the vault)");
+        address token = Prompt.forAddress("Enter token address");
         address recipient = Prompt.forAddress("Enter allowed recipient address");
 
         console.log("");
         console.log("Configuration:");
         console.log("  Vault:", vault);
-        console.log("  Sablier Contract:", MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR);
-        console.log("  From (stream owner):", from);
+        console.log("  Token:", token);
         console.log("  Allowed Recipient:", recipient);
 
         address[] memory allowedRecipients = new address[](1);
         allowedRecipients[0] = recipient;
 
-        SablierRules.RuleParams memory ruleParams =
-            SablierRules.getTransferStreamRule(MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, from, allowedRecipients);
+        SablierRules.RuleParams memory ruleParams = SablierRules.getTransferRule(token, allowedRecipients);
 
         console.log("");
         console.log("Generated Rule:");
@@ -53,16 +48,21 @@ contract GenerateSablierTransferRule is Script {
             }
         }
 
-        if (!Prompt.forConfirmation("Set this rule on the vault?")) {
-            console.log("Aborted.");
-            return;
-        }
+        // Build arrays for setProcessorRules
+        address[] memory targets = new address[](1);
+        bytes4[] memory funcSigs = new bytes4[](1);
+        IVault.FunctionRule[] memory rules = new IVault.FunctionRule[](1);
 
-        vm.startBroadcast();
-        IVault(vault).setProcessorRule(ruleParams.contractAddress, ruleParams.funcSig, ruleParams.rule);
-        vm.stopBroadcast();
+        targets[0] = ruleParams.contractAddress;
+        funcSigs[0] = ruleParams.funcSig;
+        rules[0] = ruleParams.rule;
+
+        // Generate calldata for setProcessorRules
+        bytes memory callData = abi.encodeCall(IVault.setProcessorRules, (targets, funcSigs, rules));
 
         console.log("");
-        console.log("Rule set successfully on vault!");
+        console.log("=== Calldata for setProcessorRules ===");
+        console.log("Target: ", vault);
+        console.logBytes(callData);
     }
 }
