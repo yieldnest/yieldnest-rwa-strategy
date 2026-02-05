@@ -18,7 +18,7 @@ library SablierRules {
         IVault.FunctionRule rule;
     }
 
-    /// @notice Get the rule for creating a Sablier stream with timestamps
+    /// @notice Get the rule for creating a Sablier stream with timestamps (no validator)
     /// @param sablierContract The address of the Sablier LockupLinear contract
     /// @return RuleParams for createWithTimestampsLL function
     /// @dev The function signature is:
@@ -28,16 +28,33 @@ library SablierRules {
     ///      The params are ABI-encoded as a tuple, so we mark them as UINT256 to allow any value
     ///      (the actual validation is done by the Sablier contract itself).
     function getCreateStreamRule(address sablierContract) internal pure returns (RuleParams memory) {
+        return getCreateStreamRuleWithValidator(sablierContract, IValidator(address(0)));
+    }
+
+    /// @notice Get the rule for creating a Sablier stream with timestamps and a custom validator
+    /// @param sablierContract The address of the Sablier LockupLinear contract
+    /// @param validator The validator contract to use for additional validation
+    /// @return RuleParams for createWithTimestampsLL function
+    /// @dev Use this with StrategyKeeperSablierValidator for enhanced security:
+    ///      - validates sender is the configured safe
+    ///      - validates recipient is in the allowed list
+    ///      - validates token is the configured token
+    ///      - validates stream is cancelable and transferable
+    function getCreateStreamRuleWithValidator(address sablierContract, IValidator validator)
+        internal
+        pure
+        returns (RuleParams memory)
+    {
         bytes4 funcSig = ISablierLockupLinear.createWithTimestampsLL.selector;
 
         // The function takes 3 parameters but they are complex structs
         // createWithTimestampsLL(CreateWithTimestamps, UnlockAmounts, uint40)
         // For safety, we don't restrict the parameters as they are complex nested structs
-        // The Sablier contract itself will validate the parameters
+        // The validator will perform additional validation on the decoded parameters
         IVault.ParamRule[] memory paramRules = new IVault.ParamRule[](0);
 
         IVault.FunctionRule memory rule =
-            IVault.FunctionRule({isActive: true, paramRules: paramRules, validator: IValidator(address(0))});
+            IVault.FunctionRule({isActive: true, paramRules: paramRules, validator: validator});
 
         return RuleParams({contractAddress: sablierContract, funcSig: funcSig, rule: rule});
     }
@@ -86,7 +103,8 @@ library SablierRules {
         // First param: from address - must be in allowlist (typically the vault itself)
         address[] memory fromAllowList = new address[](1);
         fromAllowList[0] = from;
-        paramRules[0] = IVault.ParamRule({paramType: IVault.ParamType.ADDRESS, isArray: false, allowList: fromAllowList});
+        paramRules[0] =
+            IVault.ParamRule({paramType: IVault.ParamType.ADDRESS, isArray: false, allowList: fromAllowList});
 
         // Second param: to address - must be in allowlist of allowed recipients
         paramRules[1] =
@@ -121,7 +139,8 @@ library SablierRules {
         // First param: from address - must be in allowlist (typically the vault itself)
         address[] memory fromAllowList = new address[](1);
         fromAllowList[0] = from;
-        paramRules[0] = IVault.ParamRule({paramType: IVault.ParamType.ADDRESS, isArray: false, allowList: fromAllowList});
+        paramRules[0] =
+            IVault.ParamRule({paramType: IVault.ParamType.ADDRESS, isArray: false, allowList: fromAllowList});
 
         // Second param: to address - must be in allowlist of allowed recipients
         paramRules[1] =
