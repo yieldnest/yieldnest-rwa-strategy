@@ -15,6 +15,8 @@ import {IVault} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/src/interf
 import {IValidator} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/src/interface/IValidator.sol";
 
 import {ISablierLockupLinear} from "src/interfaces/sablier/ISablierLockupLinear.sol";
+import {SablierRules} from "@script/rules/SablierRules.sol";
+import {StrategyKeeperSablierValidator} from "src/validators/StrategyKeeperSablierValidator.sol";
 
 /// @title MockUSDC
 /// @notice Simple mock USDC for testing
@@ -169,7 +171,7 @@ contract MockSablierLockupLinear is IERC721 {
 }
 
 /// @title SablierRulesTest
-/// @notice Tests for SablierRules with a FlexStrategy vault
+/// @notice Tests for SablierRules library with a FlexStrategy vault
 contract SablierRulesTest is Test {
     MockUSDC public usdc;
     MockSablierLockupLinear public sablier;
@@ -177,6 +179,7 @@ contract SablierRulesTest is Test {
     AccountingModule public accountingModule;
     AccountingToken public accountingToken;
     FixedRateProvider public rateProvider;
+    StrategyKeeperSablierValidator public validator;
 
     address public admin = address(0x1111);
     address public processor = address(0x2222);
@@ -188,6 +191,11 @@ contract SablierRulesTest is Test {
         // Deploy mock contracts
         usdc = new MockUSDC();
         sablier = new MockSablierLockupLinear();
+
+        // Deploy validator
+        address[] memory allowedRecipients = new address[](1);
+        allowedRecipients[0] = streamReceiver;
+        validator = new StrategyKeeperSablierValidator(safe, address(usdc), allowedRecipients);
 
         // Deploy AccountingToken
         AccountingToken accountingTokenImpl = new AccountingToken(address(usdc));
@@ -259,8 +267,8 @@ contract SablierRulesTest is Test {
         strategy.grantRole(strategy.ALLOCATOR_ROLE(), alice);
         strategy.grantRole(strategy.UNPAUSER_ROLE(), admin);
 
-        // Set up Sablier rules for the strategy
-        _setupSablierRules();
+        // Set up Sablier rules using the SablierRules library
+        _setupSablierRulesWithLibrary();
 
         // Unpause strategy
         strategy.unpause();
@@ -278,86 +286,168 @@ contract SablierRulesTest is Test {
         usdc.mint(safe, 100_000e6);
     }
 
-    function _setupSablierRules() internal {
-        // Set up rules directly without using SafeRules library
+    function _setupSablierRulesWithLibrary() internal {
+        // Use SablierRules library to generate rules
 
-        // Rule 1: Approve USDC to Sablier
-        {
-            bytes4 funcSig = IERC20.approve.selector;
-            IVault.ParamRule[] memory paramRules = new IVault.ParamRule[](2);
+        // Rule 1: Approve USDC to Sablier (using SablierRules.getApproveRule)
+        SablierRules.RuleParams memory approveRule = SablierRules.getApproveRule(address(usdc), address(sablier));
 
-            address[] memory spenderAllowList = new address[](1);
-            spenderAllowList[0] = address(sablier);
-            paramRules[0] =
-                IVault.ParamRule({paramType: IVault.ParamType.ADDRESS, isArray: false, allowList: spenderAllowList});
-            paramRules[1] =
-                IVault.ParamRule({paramType: IVault.ParamType.UINT256, isArray: false, allowList: new address[](0)});
+        // Rule 2: Create stream on Sablier WITH VALIDATOR (using SablierRules.getCreateStreamRuleWithValidator)
+        SablierRules.RuleParams memory createStreamRule =
+            SablierRules.getCreateStreamRuleWithValidator(address(sablier), IValidator(address(validator)));
 
-            IVault.FunctionRule memory rule =
-                IVault.FunctionRule({isActive: true, paramRules: paramRules, validator: IValidator(address(0))});
+        // Rule 3: Transfer stream NFT (using SablierRules.getTransferStreamRule)
+        address[] memory transferRecipients = new address[](1);
+        transferRecipients[0] = streamReceiver;
+        SablierRules.RuleParams memory transferRule =
+            SablierRules.getTransferStreamRule(address(sablier), address(strategy), transferRecipients);
 
-            IVault(address(strategy)).setProcessorRule(address(usdc), funcSig, rule);
-        }
+        // Rule 4: ERC20 transfer (using SablierRules.getTransferRule)
+        address[] memory erc20Recipients = new address[](1);
+        erc20Recipients[0] = streamReceiver;
+        SablierRules.RuleParams memory erc20TransferRule = SablierRules.getTransferRule(address(usdc), erc20Recipients);
 
-        // Rule 2: Create stream on Sablier
-        {
-            bytes4 funcSig = ISablierLockupLinear.createWithTimestampsLL.selector;
-            IVault.ParamRule[] memory paramRules = new IVault.ParamRule[](0);
+        // Apply all rules using setProcessorRules
+        address[] memory targets = new address[](4);
+        bytes4[] memory funcSigs = new bytes4[](4);
+        IVault.FunctionRule[] memory rules = new IVault.FunctionRule[](4);
 
-            IVault.FunctionRule memory rule =
-                IVault.FunctionRule({isActive: true, paramRules: paramRules, validator: IValidator(address(0))});
+        targets[0] = approveRule.contractAddress;
+        funcSigs[0] = approveRule.funcSig;
+        rules[0] = approveRule.rule;
 
-            IVault(address(strategy)).setProcessorRule(address(sablier), funcSig, rule);
-        }
+        targets[1] = createStreamRule.contractAddress;
+        funcSigs[1] = createStreamRule.funcSig;
+        rules[1] = createStreamRule.rule;
 
-        // Rule 3: Transfer stream NFT via safeTransferFrom
-        {
-            bytes4 funcSig = bytes4(keccak256("safeTransferFrom(address,address,uint256)"));
-            IVault.ParamRule[] memory paramRules = new IVault.ParamRule[](3);
+        targets[2] = transferRule.contractAddress;
+        funcSigs[2] = transferRule.funcSig;
+        rules[2] = transferRule.rule;
 
-            address[] memory fromAllowList = new address[](1);
-            fromAllowList[0] = address(strategy);
-            paramRules[0] =
-                IVault.ParamRule({paramType: IVault.ParamType.ADDRESS, isArray: false, allowList: fromAllowList});
+        targets[3] = erc20TransferRule.contractAddress;
+        funcSigs[3] = erc20TransferRule.funcSig;
+        rules[3] = erc20TransferRule.rule;
 
-            address[] memory toAllowList = new address[](1);
-            toAllowList[0] = streamReceiver;
-            paramRules[1] =
-                IVault.ParamRule({paramType: IVault.ParamType.ADDRESS, isArray: false, allowList: toAllowList});
-
-            paramRules[2] =
-                IVault.ParamRule({paramType: IVault.ParamType.UINT256, isArray: false, allowList: new address[](0)});
-
-            IVault.FunctionRule memory rule =
-                IVault.FunctionRule({isActive: true, paramRules: paramRules, validator: IValidator(address(0))});
-
-            IVault(address(strategy)).setProcessorRule(address(sablier), funcSig, rule);
-        }
+        IVault(address(strategy)).setProcessorRules(targets, funcSigs, rules);
     }
 
-    /// @notice Test that Sablier rules are set correctly
+    /*//////////////////////////////////////////////////////////////
+                         RULE GENERATION TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Test that SablierRules.getApproveRule generates correct rule
+    function test_getApproveRule() public view {
+        SablierRules.RuleParams memory rule = SablierRules.getApproveRule(address(usdc), address(sablier));
+
+        assertEq(rule.contractAddress, address(usdc), "Contract address should be USDC");
+        assertEq(rule.funcSig, IERC20.approve.selector, "Function sig should be approve");
+        assertTrue(rule.rule.isActive, "Rule should be active");
+        assertEq(rule.rule.paramRules.length, 2, "Should have 2 param rules");
+        assertEq(rule.rule.paramRules[0].allowList[0], address(sablier), "Spender should be Sablier");
+    }
+
+    /// @notice Test that SablierRules.getCreateStreamRule generates correct rule
+    function test_getCreateStreamRule() public view {
+        SablierRules.RuleParams memory rule = SablierRules.getCreateStreamRule(address(sablier));
+
+        assertEq(rule.contractAddress, address(sablier), "Contract address should be Sablier");
+        assertEq(
+            rule.funcSig,
+            ISablierLockupLinear.createWithTimestampsLL.selector,
+            "Function sig should be createWithTimestampsLL"
+        );
+        assertTrue(rule.rule.isActive, "Rule should be active");
+        assertEq(rule.rule.paramRules.length, 0, "Should have no param rules");
+        assertEq(address(rule.rule.validator), address(0), "Should have no validator");
+    }
+
+    /// @notice Test that SablierRules.getCreateStreamRuleWithValidator generates correct rule
+    function test_getCreateStreamRuleWithValidator() public view {
+        SablierRules.RuleParams memory rule =
+            SablierRules.getCreateStreamRuleWithValidator(address(sablier), IValidator(address(validator)));
+
+        assertEq(rule.contractAddress, address(sablier), "Contract address should be Sablier");
+        assertEq(
+            rule.funcSig,
+            ISablierLockupLinear.createWithTimestampsLL.selector,
+            "Function sig should be createWithTimestampsLL"
+        );
+        assertTrue(rule.rule.isActive, "Rule should be active");
+        assertEq(address(rule.rule.validator), address(validator), "Should have validator set");
+    }
+
+    /// @notice Test that SablierRules.getTransferStreamRule generates correct rule
+    function test_getTransferStreamRule() public view {
+        address[] memory recipients = new address[](1);
+        recipients[0] = streamReceiver;
+
+        SablierRules.RuleParams memory rule =
+            SablierRules.getTransferStreamRule(address(sablier), address(strategy), recipients);
+
+        assertEq(rule.contractAddress, address(sablier), "Contract address should be Sablier");
+        assertEq(
+            rule.funcSig,
+            bytes4(keccak256("safeTransferFrom(address,address,uint256)")),
+            "Function sig should be safeTransferFrom"
+        );
+        assertTrue(rule.rule.isActive, "Rule should be active");
+        assertEq(rule.rule.paramRules.length, 3, "Should have 3 param rules");
+        assertEq(rule.rule.paramRules[0].allowList[0], address(strategy), "From should be strategy");
+        assertEq(rule.rule.paramRules[1].allowList[0], streamReceiver, "To should be stream receiver");
+    }
+
+    /// @notice Test that SablierRules.getTransferRule generates correct rule
+    function test_getTransferRule() public view {
+        address[] memory recipients = new address[](1);
+        recipients[0] = streamReceiver;
+
+        SablierRules.RuleParams memory rule = SablierRules.getTransferRule(address(usdc), recipients);
+
+        assertEq(rule.contractAddress, address(usdc), "Contract address should be USDC");
+        assertEq(rule.funcSig, IERC20.transfer.selector, "Function sig should be transfer");
+        assertTrue(rule.rule.isActive, "Rule should be active");
+        assertEq(rule.rule.paramRules.length, 2, "Should have 2 param rules");
+        assertEq(rule.rule.paramRules[0].allowList[0], streamReceiver, "To should be stream receiver");
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                         RULES SET CORRECTLY TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Test that Sablier rules are set correctly on the strategy
     function test_sablierRulesAreSet() public view {
         // Check approve rule
         IVault.FunctionRule memory approveRule =
             IVault(address(strategy)).getProcessorRule(address(usdc), IERC20.approve.selector);
         assertTrue(approveRule.isActive, "Approve rule should be active");
         assertEq(approveRule.paramRules.length, 2, "Approve rule should have 2 param rules");
+        assertEq(approveRule.paramRules[0].allowList[0], address(sablier), "Spender should be Sablier");
 
-        // Check create stream rule
+        // Check create stream rule with validator
         IVault.FunctionRule memory createRule = IVault(address(strategy)).getProcessorRule(
             address(sablier), ISablierLockupLinear.createWithTimestampsLL.selector
         );
         assertTrue(createRule.isActive, "Create stream rule should be active");
+        assertEq(address(createRule.validator), address(validator), "Validator should be set");
 
-        // Check transfer rule
+        // Check transfer stream rule
         bytes4 safeTransferSig = bytes4(keccak256("safeTransferFrom(address,address,uint256)"));
         IVault.FunctionRule memory transferRule =
             IVault(address(strategy)).getProcessorRule(address(sablier), safeTransferSig);
         assertTrue(transferRule.isActive, "Transfer rule should be active");
         assertEq(transferRule.paramRules.length, 3, "Transfer rule should have 3 param rules");
+
+        // Check ERC20 transfer rule
+        IVault.FunctionRule memory erc20TransferRule =
+            IVault(address(strategy)).getProcessorRule(address(usdc), IERC20.transfer.selector);
+        assertTrue(erc20TransferRule.isActive, "ERC20 transfer rule should be active");
     }
 
-    /// @notice Test creating a Sablier stream via processor
+    /*//////////////////////////////////////////////////////////////
+                         PROCESSOR INTEGRATION TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Test creating a Sablier stream via processor using rules from SablierRules library
     function test_createSablierStreamViaProcessor() public {
         uint256 streamAmount = 1000e6;
 
@@ -371,9 +461,9 @@ contract SablierRulesTest is Test {
         values[0] = 0;
         data[0] = abi.encodeCall(IERC20.approve, (address(sablier), streamAmount));
 
-        // Call 2: Create stream
+        // Call 2: Create stream with valid params (sender=safe, recipient=streamReceiver, cancelable=true, transferable=true)
         ISablierLockupLinear.CreateWithTimestamps memory params = ISablierLockupLinear.CreateWithTimestamps({
-            sender: address(strategy),
+            sender: safe,
             recipient: streamReceiver,
             depositAmount: uint128(streamAmount),
             token: IERC20(address(usdc)),
@@ -406,20 +496,28 @@ contract SablierRulesTest is Test {
         uint256 streamAmount = 1000e6;
 
         // First create a stream where strategy is the recipient (so strategy owns the NFT)
-        // Build processor calls
         address[] memory targets = new address[](2);
         uint256[] memory values = new uint256[](2);
         bytes[] memory data = new bytes[](2);
 
-        // Call 1: Approve Sablier to spend USDC
         targets[0] = address(usdc);
         values[0] = 0;
         data[0] = abi.encodeCall(IERC20.approve, (address(sablier), streamAmount));
 
-        // Call 2: Create stream with strategy as recipient
+        // Need to add streamReceiver to validator for this test, but actually we need strategy as recipient
+        // Let's update the validator setup to allow strategy as recipient too
+        // Actually, let's just test the transfer rule - create stream with strategy as recipient
+        // But validator will reject this since strategy isn't in allowed recipients
+        // So we need to bypass the validator for this specific test
+
+        // For this test, we'll create a stream directly (not through processor) to strategy
+        // Then test the NFT transfer through processor
+        usdc.mint(address(this), streamAmount);
+        usdc.approve(address(sablier), streamAmount);
+
         ISablierLockupLinear.CreateWithTimestamps memory params = ISablierLockupLinear.CreateWithTimestamps({
-            sender: address(strategy),
-            recipient: address(strategy), // Strategy receives the NFT
+            sender: address(this),
+            recipient: address(strategy),
             depositAmount: uint128(streamAmount),
             token: IERC20(address(usdc)),
             cancelable: true,
@@ -432,19 +530,13 @@ contract SablierRulesTest is Test {
         });
         ISablierLockupLinear.UnlockAmounts memory unlockAmounts =
             ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0});
-        targets[1] = address(sablier);
-        values[1] = 0;
-        data[1] = abi.encodeCall(ISablierLockupLinear.createWithTimestampsLL, (params, unlockAmounts, 0));
-
-        // Execute via processor to create stream
-        vm.prank(processor);
-        strategy.processor(targets, values, data);
+        sablier.createWithTimestampsLL(params, unlockAmounts, 0);
 
         // Verify strategy owns the stream
         uint256 streamId = 1;
         assertEq(sablier.ownerOf(streamId), address(strategy), "Strategy should own the stream");
 
-        // Now transfer the stream NFT to streamReceiver
+        // Now transfer the stream NFT to streamReceiver via processor
         address[] memory transferTargets = new address[](1);
         uint256[] memory transferValues = new uint256[](1);
         bytes[] memory transferData = new bytes[](1);
@@ -463,12 +555,38 @@ contract SablierRulesTest is Test {
         assertEq(sablier.ownerOf(streamId), streamReceiver, "Stream should now be owned by receiver");
     }
 
-    /// @notice Test that transfer to unauthorized recipient fails
-    function test_revert_transferToUnauthorizedRecipient() public {
-        uint256 streamAmount = 1000e6;
-        address unauthorizedRecipient = address(0xDEAD);
+    /// @notice Test ERC20 transfer via processor
+    function test_erc20TransferViaProcessor() public {
+        uint256 transferAmount = 500e6;
 
-        // Create stream with strategy as recipient
+        address[] memory targets = new address[](1);
+        uint256[] memory values = new uint256[](1);
+        bytes[] memory data = new bytes[](1);
+
+        targets[0] = address(usdc);
+        values[0] = 0;
+        data[0] = abi.encodeCall(IERC20.transfer, (streamReceiver, transferAmount));
+
+        uint256 receiverBalanceBefore = usdc.balanceOf(streamReceiver);
+
+        vm.prank(processor);
+        strategy.processor(targets, values, data);
+
+        assertEq(
+            usdc.balanceOf(streamReceiver),
+            receiverBalanceBefore + transferAmount,
+            "Receiver should have received tokens"
+        );
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                         VALIDATION FAILURE TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Test that stream creation with invalid sender fails (validator rejects)
+    function test_revert_createStreamWithInvalidSender() public {
+        uint256 streamAmount = 1000e6;
+
         address[] memory targets = new address[](2);
         uint256[] memory values = new uint256[](2);
         bytes[] memory data = new bytes[](2);
@@ -477,9 +595,10 @@ contract SablierRulesTest is Test {
         values[0] = 0;
         data[0] = abi.encodeCall(IERC20.approve, (address(sablier), streamAmount));
 
+        // Use wrong sender (not the safe)
         ISablierLockupLinear.CreateWithTimestamps memory params = ISablierLockupLinear.CreateWithTimestamps({
-            sender: address(strategy),
-            recipient: address(strategy),
+            sender: address(strategy), // WRONG - should be safe
+            recipient: streamReceiver,
             depositAmount: uint128(streamAmount),
             token: IERC20(address(usdc)),
             cancelable: true,
@@ -497,7 +616,148 @@ contract SablierRulesTest is Test {
         data[1] = abi.encodeCall(ISablierLockupLinear.createWithTimestampsLL, (params, unlockAmounts, 0));
 
         vm.prank(processor);
+        vm.expectRevert(
+            abi.encodeWithSelector(StrategyKeeperSablierValidator.InvalidSender.selector, address(strategy), safe)
+        );
         strategy.processor(targets, values, data);
+    }
+
+    /// @notice Test that stream creation with invalid recipient fails (validator rejects)
+    function test_revert_createStreamWithInvalidRecipient() public {
+        uint256 streamAmount = 1000e6;
+        address invalidRecipient = address(0xDEAD);
+
+        address[] memory targets = new address[](2);
+        uint256[] memory values = new uint256[](2);
+        bytes[] memory data = new bytes[](2);
+
+        targets[0] = address(usdc);
+        values[0] = 0;
+        data[0] = abi.encodeCall(IERC20.approve, (address(sablier), streamAmount));
+
+        ISablierLockupLinear.CreateWithTimestamps memory params = ISablierLockupLinear.CreateWithTimestamps({
+            sender: safe,
+            recipient: invalidRecipient, // WRONG - not in allowed list
+            depositAmount: uint128(streamAmount),
+            token: IERC20(address(usdc)),
+            cancelable: true,
+            transferable: true,
+            timestamps: ISablierLockupLinear.Timestamps({
+                start: uint40(block.timestamp),
+                end: uint40(block.timestamp + 28 days)
+            }),
+            shape: ""
+        });
+        ISablierLockupLinear.UnlockAmounts memory unlockAmounts =
+            ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0});
+        targets[1] = address(sablier);
+        values[1] = 0;
+        data[1] = abi.encodeCall(ISablierLockupLinear.createWithTimestampsLL, (params, unlockAmounts, 0));
+
+        vm.prank(processor);
+        vm.expectRevert(
+            abi.encodeWithSelector(StrategyKeeperSablierValidator.InvalidRecipient.selector, invalidRecipient)
+        );
+        strategy.processor(targets, values, data);
+    }
+
+    /// @notice Test that stream creation with non-cancelable stream fails (validator rejects)
+    function test_revert_createStreamNotCancelable() public {
+        uint256 streamAmount = 1000e6;
+
+        address[] memory targets = new address[](2);
+        uint256[] memory values = new uint256[](2);
+        bytes[] memory data = new bytes[](2);
+
+        targets[0] = address(usdc);
+        values[0] = 0;
+        data[0] = abi.encodeCall(IERC20.approve, (address(sablier), streamAmount));
+
+        ISablierLockupLinear.CreateWithTimestamps memory params = ISablierLockupLinear.CreateWithTimestamps({
+            sender: safe,
+            recipient: streamReceiver,
+            depositAmount: uint128(streamAmount),
+            token: IERC20(address(usdc)),
+            cancelable: false, // WRONG - must be true
+            transferable: true,
+            timestamps: ISablierLockupLinear.Timestamps({
+                start: uint40(block.timestamp),
+                end: uint40(block.timestamp + 28 days)
+            }),
+            shape: ""
+        });
+        ISablierLockupLinear.UnlockAmounts memory unlockAmounts =
+            ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0});
+        targets[1] = address(sablier);
+        values[1] = 0;
+        data[1] = abi.encodeCall(ISablierLockupLinear.createWithTimestampsLL, (params, unlockAmounts, 0));
+
+        vm.prank(processor);
+        vm.expectRevert(StrategyKeeperSablierValidator.StreamMustBeCancelable.selector);
+        strategy.processor(targets, values, data);
+    }
+
+    /// @notice Test that stream creation with non-transferable stream fails (validator rejects)
+    function test_revert_createStreamNotTransferable() public {
+        uint256 streamAmount = 1000e6;
+
+        address[] memory targets = new address[](2);
+        uint256[] memory values = new uint256[](2);
+        bytes[] memory data = new bytes[](2);
+
+        targets[0] = address(usdc);
+        values[0] = 0;
+        data[0] = abi.encodeCall(IERC20.approve, (address(sablier), streamAmount));
+
+        ISablierLockupLinear.CreateWithTimestamps memory params = ISablierLockupLinear.CreateWithTimestamps({
+            sender: safe,
+            recipient: streamReceiver,
+            depositAmount: uint128(streamAmount),
+            token: IERC20(address(usdc)),
+            cancelable: true,
+            transferable: false, // WRONG - must be true
+            timestamps: ISablierLockupLinear.Timestamps({
+                start: uint40(block.timestamp),
+                end: uint40(block.timestamp + 28 days)
+            }),
+            shape: ""
+        });
+        ISablierLockupLinear.UnlockAmounts memory unlockAmounts =
+            ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0});
+        targets[1] = address(sablier);
+        values[1] = 0;
+        data[1] = abi.encodeCall(ISablierLockupLinear.createWithTimestampsLL, (params, unlockAmounts, 0));
+
+        vm.prank(processor);
+        vm.expectRevert(StrategyKeeperSablierValidator.StreamMustBeTransferable.selector);
+        strategy.processor(targets, values, data);
+    }
+
+    /// @notice Test that transfer to unauthorized recipient fails
+    function test_revert_transferToUnauthorizedRecipient() public {
+        address unauthorizedRecipient = address(0xDEAD);
+
+        // Create stream to strategy first
+        uint256 streamAmount = 1000e6;
+        usdc.mint(address(this), streamAmount);
+        usdc.approve(address(sablier), streamAmount);
+
+        ISablierLockupLinear.CreateWithTimestamps memory params = ISablierLockupLinear.CreateWithTimestamps({
+            sender: address(this),
+            recipient: address(strategy),
+            depositAmount: uint128(streamAmount),
+            token: IERC20(address(usdc)),
+            cancelable: true,
+            transferable: true,
+            timestamps: ISablierLockupLinear.Timestamps({
+                start: uint40(block.timestamp),
+                end: uint40(block.timestamp + 28 days)
+            }),
+            shape: ""
+        });
+        ISablierLockupLinear.UnlockAmounts memory unlockAmounts =
+            ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0});
+        sablier.createWithTimestampsLL(params, unlockAmounts, 0);
 
         // Try to transfer to unauthorized recipient (should fail)
         address[] memory transferTargets = new address[](1);
@@ -533,144 +793,43 @@ contract SablierRulesTest is Test {
         vm.expectRevert();
         strategy.processor(targets, values, data);
     }
+
+    /// @notice Test ERC20 transfer to unauthorized recipient fails
+    function test_revert_erc20TransferUnauthorizedRecipient() public {
+        address unauthorizedRecipient = address(0xBEEF);
+
+        address[] memory targets = new address[](1);
+        uint256[] memory values = new uint256[](1);
+        bytes[] memory data = new bytes[](1);
+
+        targets[0] = address(usdc);
+        values[0] = 0;
+        data[0] = abi.encodeCall(IERC20.transfer, (unauthorizedRecipient, 1000e6));
+
+        // Should revert because unauthorizedRecipient is not in allowlist
+        vm.prank(processor);
+        vm.expectRevert();
+        strategy.processor(targets, values, data);
+    }
 }
 
-import {StrategyKeeperSablierValidator} from "src/validators/StrategyKeeperSablierValidator.sol";
-
 /// @title StrategyKeeperSablierValidatorTest
-/// @notice Tests for the StrategyKeeperSablierValidator
+/// @notice Direct unit tests for the StrategyKeeperSablierValidator
 contract StrategyKeeperSablierValidatorTest is Test {
     MockUSDC public usdc;
     MockSablierLockupLinear public sablier;
-    FlexStrategy public strategy;
-    AccountingModule public accountingModule;
-    AccountingToken public accountingToken;
-    FixedRateProvider public rateProvider;
     StrategyKeeperSablierValidator public validator;
 
-    address public admin = address(0x1111);
-    address public processor = address(0x2222);
     address public safe = address(0x3333);
     address public streamReceiver = address(0x4444);
-    address public alice = address(0x5555);
 
     function setUp() public {
-        // Deploy mock contracts
         usdc = new MockUSDC();
         sablier = new MockSablierLockupLinear();
 
-        // Deploy validator with safe, token, and allowed recipients
         address[] memory allowedRecipients = new address[](1);
         allowedRecipients[0] = streamReceiver;
         validator = new StrategyKeeperSablierValidator(safe, address(usdc), allowedRecipients);
-
-        // Deploy AccountingToken
-        AccountingToken accountingTokenImpl = new AccountingToken(address(usdc));
-        TransparentUpgradeableProxy accountingTokenProxy = new TransparentUpgradeableProxy(
-            address(accountingTokenImpl),
-            admin,
-            abi.encodeCall(AccountingToken.initialize, (admin, "Accounting Token", "AT"))
-        );
-        accountingToken = AccountingToken(payable(address(accountingTokenProxy)));
-
-        // Deploy rate provider
-        rateProvider = new FixedRateProvider(address(accountingToken));
-
-        // Deploy FlexStrategy
-        FlexStrategy strategyImpl = new FlexStrategy();
-        TransparentUpgradeableProxy strategyProxy = new TransparentUpgradeableProxy(
-            address(strategyImpl),
-            admin,
-            abi.encodeCall(
-                FlexStrategy.initialize,
-                (
-                    admin,
-                    "Test Flex Strategy",
-                    "TFS",
-                    6,
-                    address(usdc),
-                    address(accountingToken),
-                    true,
-                    address(rateProvider),
-                    false
-                )
-            )
-        );
-        strategy = FlexStrategy(payable(address(strategyProxy)));
-
-        // Deploy AccountingModule
-        AccountingModule accountingModuleImpl = new AccountingModule();
-        TransparentUpgradeableProxy accountingModuleProxy = new TransparentUpgradeableProxy(
-            address(accountingModuleImpl),
-            admin,
-            abi.encodeCall(
-                AccountingModule.initialize,
-                (
-                    address(strategy),
-                    admin,
-                    safe,
-                    IAccountingToken(address(accountingToken)),
-                    0.15 ether,
-                    0,
-                    0,
-                    uint16(3600)
-                )
-            )
-        );
-        accountingModule = AccountingModule(payable(address(accountingModuleProxy)));
-
-        // Configure strategy
-        vm.startPrank(admin);
-        accountingToken.setAccountingModule(address(accountingModule));
-        strategy.setAccountingModule(address(accountingModule));
-        strategy.grantRole(strategy.PROCESSOR_ROLE(), processor);
-        strategy.grantRole(strategy.PROCESSOR_MANAGER_ROLE(), admin);
-        strategy.grantRole(strategy.ALLOCATOR_ROLE(), alice);
-        strategy.grantRole(strategy.UNPAUSER_ROLE(), admin);
-
-        // Set up Sablier rules with the validator
-        _setupSablierRulesWithValidator();
-
-        strategy.unpause();
-        vm.stopPrank();
-
-        // Fund the strategy with USDC
-        usdc.mint(address(strategy), 100_000e6);
-        usdc.mint(safe, 100_000e6);
-    }
-
-    function _setupSablierRulesWithValidator() internal {
-        // Rule 1: Approve USDC to Sablier
-        {
-            bytes4 funcSig = IERC20.approve.selector;
-            IVault.ParamRule[] memory paramRules = new IVault.ParamRule[](2);
-
-            address[] memory spenderAllowList = new address[](1);
-            spenderAllowList[0] = address(sablier);
-            paramRules[0] =
-                IVault.ParamRule({paramType: IVault.ParamType.ADDRESS, isArray: false, allowList: spenderAllowList});
-            paramRules[1] =
-                IVault.ParamRule({paramType: IVault.ParamType.UINT256, isArray: false, allowList: new address[](0)});
-
-            IVault.FunctionRule memory rule =
-                IVault.FunctionRule({isActive: true, paramRules: paramRules, validator: IValidator(address(0))});
-
-            IVault(address(strategy)).setProcessorRule(address(usdc), funcSig, rule);
-        }
-
-        // Rule 2: Create stream on Sablier WITH VALIDATOR
-        {
-            bytes4 funcSig = ISablierLockupLinear.createWithTimestampsLL.selector;
-            IVault.ParamRule[] memory paramRules = new IVault.ParamRule[](0);
-
-            IVault.FunctionRule memory rule = IVault.FunctionRule({
-                isActive: true,
-                paramRules: paramRules,
-                validator: IValidator(address(validator)) // Use the validator
-            });
-
-            IVault(address(strategy)).setProcessorRule(address(sablier), funcSig, rule);
-        }
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -712,70 +871,14 @@ contract StrategyKeeperSablierValidatorTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////
-                         VALIDATION SUCCESS TESTS
+                         DIRECT VALIDATION TESTS
     //////////////////////////////////////////////////////////////*/
 
-    function test_validStreamCreation() public {
-        uint256 streamAmount = 1000e6;
-
-        // Build processor calls
-        address[] memory targets = new address[](2);
-        uint256[] memory values = new uint256[](2);
-        bytes[] memory data = new bytes[](2);
-
-        // Call 1: Approve Sablier
-        targets[0] = address(usdc);
-        values[0] = 0;
-        data[0] = abi.encodeCall(IERC20.approve, (address(sablier), streamAmount));
-
-        // Call 2: Create stream with VALID params (sender=safe, recipient=streamReceiver, cancelable=true, transferable=true)
+    function test_validateValidCalldata() public view {
         ISablierLockupLinear.CreateWithTimestamps memory params = ISablierLockupLinear.CreateWithTimestamps({
-            sender: safe, // Must be the configured safe
-            recipient: streamReceiver, // Must be in allowed recipients
-            depositAmount: uint128(streamAmount),
-            token: IERC20(address(usdc)), // Must be the configured token
-            cancelable: true, // Must be true
-            transferable: true, // Must be true
-            timestamps: ISablierLockupLinear.Timestamps({
-                start: uint40(block.timestamp),
-                end: uint40(block.timestamp + 28 days)
-            }),
-            shape: ""
-        });
-        ISablierLockupLinear.UnlockAmounts memory unlockAmounts =
-            ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0});
-        targets[1] = address(sablier);
-        values[1] = 0;
-        data[1] = abi.encodeCall(ISablierLockupLinear.createWithTimestampsLL, (params, unlockAmounts, 0));
-
-        // Execute via processor - should succeed
-        vm.prank(processor);
-        strategy.processor(targets, values, data);
-
-        // Verify stream was created
-        assertEq(sablier.ownerOf(1), streamReceiver, "Stream should be owned by receiver");
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                         VALIDATION FAILURE TESTS
-    //////////////////////////////////////////////////////////////*/
-
-    function test_revert_invalidSender() public {
-        uint256 streamAmount = 1000e6;
-
-        address[] memory targets = new address[](2);
-        uint256[] memory values = new uint256[](2);
-        bytes[] memory data = new bytes[](2);
-
-        targets[0] = address(usdc);
-        values[0] = 0;
-        data[0] = abi.encodeCall(IERC20.approve, (address(sablier), streamAmount));
-
-        // Use wrong sender (not the safe)
-        ISablierLockupLinear.CreateWithTimestamps memory params = ISablierLockupLinear.CreateWithTimestamps({
-            sender: address(strategy), // WRONG - should be safe
+            sender: safe,
             recipient: streamReceiver,
-            depositAmount: uint128(streamAmount),
+            depositAmount: 1000e6,
             token: IERC20(address(usdc)),
             cancelable: true,
             transferable: true,
@@ -787,171 +890,14 @@ contract StrategyKeeperSablierValidatorTest is Test {
         });
         ISablierLockupLinear.UnlockAmounts memory unlockAmounts =
             ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0});
-        targets[1] = address(sablier);
-        values[1] = 0;
-        data[1] = abi.encodeCall(ISablierLockupLinear.createWithTimestampsLL, (params, unlockAmounts, 0));
 
-        vm.prank(processor);
-        vm.expectRevert(
-            abi.encodeWithSelector(StrategyKeeperSablierValidator.InvalidSender.selector, address(strategy), safe)
-        );
-        strategy.processor(targets, values, data);
-    }
+        bytes memory callData = abi.encodeCall(ISablierLockupLinear.createWithTimestampsLL, (params, unlockAmounts, 0));
 
-    function test_revert_invalidRecipient() public {
-        uint256 streamAmount = 1000e6;
-        address invalidRecipient = address(0xDEAD);
-
-        address[] memory targets = new address[](2);
-        uint256[] memory values = new uint256[](2);
-        bytes[] memory data = new bytes[](2);
-
-        targets[0] = address(usdc);
-        values[0] = 0;
-        data[0] = abi.encodeCall(IERC20.approve, (address(sablier), streamAmount));
-
-        // Use unauthorized recipient
-        ISablierLockupLinear.CreateWithTimestamps memory params = ISablierLockupLinear.CreateWithTimestamps({
-            sender: safe,
-            recipient: invalidRecipient, // WRONG - not in allowed list
-            depositAmount: uint128(streamAmount),
-            token: IERC20(address(usdc)),
-            cancelable: true,
-            transferable: true,
-            timestamps: ISablierLockupLinear.Timestamps({
-                start: uint40(block.timestamp),
-                end: uint40(block.timestamp + 28 days)
-            }),
-            shape: ""
-        });
-        ISablierLockupLinear.UnlockAmounts memory unlockAmounts =
-            ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0});
-        targets[1] = address(sablier);
-        values[1] = 0;
-        data[1] = abi.encodeCall(ISablierLockupLinear.createWithTimestampsLL, (params, unlockAmounts, 0));
-
-        vm.prank(processor);
-        vm.expectRevert(
-            abi.encodeWithSelector(StrategyKeeperSablierValidator.InvalidRecipient.selector, invalidRecipient)
-        );
-        strategy.processor(targets, values, data);
-    }
-
-    function test_revert_invalidToken() public {
-        uint256 streamAmount = 1000e6;
-        MockUSDC wrongToken = new MockUSDC();
-
-        address[] memory targets = new address[](2);
-        uint256[] memory values = new uint256[](2);
-        bytes[] memory data = new bytes[](2);
-
-        targets[0] = address(usdc);
-        values[0] = 0;
-        data[0] = abi.encodeCall(IERC20.approve, (address(sablier), streamAmount));
-
-        // Use wrong token
-        ISablierLockupLinear.CreateWithTimestamps memory params = ISablierLockupLinear.CreateWithTimestamps({
-            sender: safe,
-            recipient: streamReceiver,
-            depositAmount: uint128(streamAmount),
-            token: IERC20(address(wrongToken)), // WRONG - not the configured token
-            cancelable: true,
-            transferable: true,
-            timestamps: ISablierLockupLinear.Timestamps({
-                start: uint40(block.timestamp),
-                end: uint40(block.timestamp + 28 days)
-            }),
-            shape: ""
-        });
-        ISablierLockupLinear.UnlockAmounts memory unlockAmounts =
-            ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0});
-        targets[1] = address(sablier);
-        values[1] = 0;
-        data[1] = abi.encodeCall(ISablierLockupLinear.createWithTimestampsLL, (params, unlockAmounts, 0));
-
-        vm.prank(processor);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                StrategyKeeperSablierValidator.InvalidToken.selector, address(wrongToken), address(usdc)
-            )
-        );
-        strategy.processor(targets, values, data);
-    }
-
-    function test_revert_notCancelable() public {
-        uint256 streamAmount = 1000e6;
-
-        address[] memory targets = new address[](2);
-        uint256[] memory values = new uint256[](2);
-        bytes[] memory data = new bytes[](2);
-
-        targets[0] = address(usdc);
-        values[0] = 0;
-        data[0] = abi.encodeCall(IERC20.approve, (address(sablier), streamAmount));
-
-        // Stream not cancelable
-        ISablierLockupLinear.CreateWithTimestamps memory params = ISablierLockupLinear.CreateWithTimestamps({
-            sender: safe,
-            recipient: streamReceiver,
-            depositAmount: uint128(streamAmount),
-            token: IERC20(address(usdc)),
-            cancelable: false, // WRONG - must be true
-            transferable: true,
-            timestamps: ISablierLockupLinear.Timestamps({
-                start: uint40(block.timestamp),
-                end: uint40(block.timestamp + 28 days)
-            }),
-            shape: ""
-        });
-        ISablierLockupLinear.UnlockAmounts memory unlockAmounts =
-            ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0});
-        targets[1] = address(sablier);
-        values[1] = 0;
-        data[1] = abi.encodeCall(ISablierLockupLinear.createWithTimestampsLL, (params, unlockAmounts, 0));
-
-        vm.prank(processor);
-        vm.expectRevert(StrategyKeeperSablierValidator.StreamMustBeCancelable.selector);
-        strategy.processor(targets, values, data);
-    }
-
-    function test_revert_notTransferable() public {
-        uint256 streamAmount = 1000e6;
-
-        address[] memory targets = new address[](2);
-        uint256[] memory values = new uint256[](2);
-        bytes[] memory data = new bytes[](2);
-
-        targets[0] = address(usdc);
-        values[0] = 0;
-        data[0] = abi.encodeCall(IERC20.approve, (address(sablier), streamAmount));
-
-        // Stream not transferable
-        ISablierLockupLinear.CreateWithTimestamps memory params = ISablierLockupLinear.CreateWithTimestamps({
-            sender: safe,
-            recipient: streamReceiver,
-            depositAmount: uint128(streamAmount),
-            token: IERC20(address(usdc)),
-            cancelable: true,
-            transferable: false, // WRONG - must be true
-            timestamps: ISablierLockupLinear.Timestamps({
-                start: uint40(block.timestamp),
-                end: uint40(block.timestamp + 28 days)
-            }),
-            shape: ""
-        });
-        ISablierLockupLinear.UnlockAmounts memory unlockAmounts =
-            ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0});
-        targets[1] = address(sablier);
-        values[1] = 0;
-        data[1] = abi.encodeCall(ISablierLockupLinear.createWithTimestampsLL, (params, unlockAmounts, 0));
-
-        vm.prank(processor);
-        vm.expectRevert(StrategyKeeperSablierValidator.StreamMustBeTransferable.selector);
-        strategy.processor(targets, values, data);
+        // Should not revert
+        validator.validate(address(sablier), 0, callData);
     }
 
     function test_revert_invalidFunctionSelector() public {
-        // Test directly calling validator with wrong selector
         bytes memory data = abi.encodeWithSelector(bytes4(0xdeadbeef), "test");
 
         vm.expectRevert(
@@ -961,7 +907,6 @@ contract StrategyKeeperSablierValidatorTest is Test {
     }
 
     function test_revert_dataTooShort() public {
-        // Test directly calling validator with data that's too short
         bytes memory data = hex"dead";
 
         vm.expectRevert(

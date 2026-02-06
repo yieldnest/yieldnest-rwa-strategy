@@ -36,8 +36,7 @@ contract DeploySablierValidator is Script {
 
         vm.startBroadcast();
 
-        StrategyKeeperSablierValidator validator =
-            new StrategyKeeperSablierValidator(safe, token, allowedRecipients);
+        StrategyKeeperSablierValidator validator = new StrategyKeeperSablierValidator(safe, token, allowedRecipients);
 
         vm.stopBroadcast();
 
