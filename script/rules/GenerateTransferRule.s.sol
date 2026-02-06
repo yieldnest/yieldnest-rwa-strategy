@@ -4,30 +4,30 @@ pragma solidity ^0.8.24;
 import {Script, console} from "forge-std/Script.sol";
 import {IVault} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/src/interface/IVault.sol";
 import {SablierRules} from "@script/rules/SablierRules.sol";
-import {Prompt} from "@script/utils/Prompt.sol";
+import {MainnetKeeperContracts} from "@script/Contracts.sol";
 
 /// @title GenerateTransferRule
 /// @notice Script to generate and set an ERC20 transfer rule on a vault
 /// @dev Run with: forge script script/rules/GenerateTransferRule.s.sol
 contract GenerateTransferRule is Script {
+    address constant BORROWER = MainnetKeeperContracts.BORROWER;
+    address constant FEE_RECEIVER = MainnetKeeperContracts.FEE_WALLET;
+
     function run() public {
         console.log("=== Generate ERC20 Transfer Rule ===");
         console.log("");
 
-        address vault = Prompt.forAddress("Enter vault address");
-        address token = Prompt.forAddress("Enter token address");
-        address recipient = Prompt.forAddress("Enter allowed recipient address");
-
-        console.log("");
         console.log("Configuration:");
-        console.log("  Vault:", vault);
-        console.log("  Token:", token);
-        console.log("  Allowed Recipient:", recipient);
+        console.log("  Token:", MainnetKeeperContracts.USDC);
+        console.log("  BORROWER:", BORROWER);
+        console.log("  FEE_RECEIVER:", FEE_RECEIVER);
 
-        address[] memory allowedRecipients = new address[](1);
-        allowedRecipients[0] = recipient;
+        address[] memory allowedRecipients = new address[](2);
+        allowedRecipients[0] = BORROWER;
+        allowedRecipients[1] = FEE_RECEIVER;
 
-        SablierRules.RuleParams memory ruleParams = SablierRules.getTransferRule(token, allowedRecipients);
+        SablierRules.RuleParams memory ruleParams =
+            SablierRules.getTransferRule(MainnetKeeperContracts.USDC, allowedRecipients);
 
         console.log("");
         console.log("Generated Rule:");
@@ -62,7 +62,7 @@ contract GenerateTransferRule is Script {
 
         console.log("");
         console.log("=== Calldata for setProcessorRules ===");
-        console.log("Target: ", vault);
+        console.log("Target: ", MainnetKeeperContracts.FLEX_STRATEGY);
         console.logBytes(callData);
     }
 }
