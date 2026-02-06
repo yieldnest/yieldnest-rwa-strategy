@@ -6,14 +6,12 @@ import {AccessControlEnumerableUpgradeable} from
     "lib/openzeppelin-contracts-upgradeable/contracts/access/extensions/AccessControlEnumerableUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from
     "lib/openzeppelin-contracts-upgradeable/contracts/utils/ReentrancyGuardUpgradeable.sol";
+import {PausableUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/utils/PausableUpgradeable.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
-import {IERC1271} from "lib/openzeppelin-contracts/contracts/interfaces/IERC1271.sol";
 import {IERC4626} from "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 import {SafeERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import {Ownable} from "lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
-import {IKeeperCompanion} from "src/KeeperCompanion.sol";
 import {ISablierLockupLinear} from "src/interfaces/sablier/ISablierLockupLinear.sol";
 
 /// @title IStrategyKeeper
@@ -23,8 +21,7 @@ interface IStrategyKeeper {
     struct KeeperConfig {
         address vault; // Vault to monitor for excess baseAsset
         address targetStrategy; // FlexStrategy to allocate funds to
-        address safe; // Gnosis Safe holding the funds
-        address companion; // KeeperCompanion contract for co-signing
+        address safe; // Gnosis Safe holding the funds (keeper must be enabled as module)
         address baseAsset; // The base asset (e.g., USDC)
         address borrower; // Address to receive principal
         address feeWallet; // Address to receive 1/feeFraction of interest
@@ -33,7 +30,7 @@ interface IStrategyKeeper {
         uint256 minThreshold; // Minimum vault balance to trigger allocation
         uint256 minResidual; // Minimum to keep in Safe after disbursement
         uint256 apr; // APR where 1e18 = 100%
-        uint256 holdingDays; // Days of yield to hold in advance (e.g., 28)
+        uint256 holdingPeriod; // Duration in seconds to hold yield in advance (e.g., 28 days = 2419200)
         uint256 minProcessingPercent; // Min % of vault total for time-based fallback (1e18 = 100%)
         uint256 feeFraction; // Fee denominator (e.g., 11 means 1/11 to fee wallet, 10/11 to stream)
     }
@@ -43,8 +40,9 @@ interface IStrategyKeeper {
     error InsufficientSafeBalance(uint256 balance, uint256 required);
     error SafeExecutionFailed();
     error InvalidConfiguration();
-    error InvalidCompanionOwner();
     error NoFundsToProcess();
+    error StreamAmountExceedsUint128(uint256 amount);
+    error HoldingPeriodExceedsMaximum(uint256 holdingPeriod, uint256 maximum);
 
     event KeeperExecuted(
         uint256 indexed timestamp,
@@ -55,19 +53,22 @@ interface IStrategyKeeper {
         uint256 fee,
         uint256 streamAmount
     );
-    event ConfigUpdated();
+    event ConfigUpdated(
+        address indexed vault, address indexed safe, uint256 apr, uint256 holdingPeriod, uint256 feeFraction
+    );
 }
 
 /// @title StrategyKeeper
 /// @notice Upgradeable keeper contract that monitors vault balances, allocates to strategy,
 ///         and disburses funds from the Safe with yield holdback via Sablier streams.
-/// @dev Uses TransparentUpgradeableProxy pattern. Requires PROCESSOR_ROLE on the vault and Safe ownership.
+/// @dev Uses TransparentUpgradeableProxy pattern. Requires PROCESSOR_ROLE on the vault.
+///      Must be registered as a module on the Gnosis Safe to execute transactions.
 contract StrategyKeeper is
     IStrategyKeeper,
-    IERC1271,
     Initializable,
     AccessControlEnumerableUpgradeable,
-    ReentrancyGuardUpgradeable
+    ReentrancyGuardUpgradeable,
+    PausableUpgradeable
 {
     using SafeERC20 for IERC20;
 
@@ -77,23 +78,20 @@ contract StrategyKeeper is
     /// @notice Role required to update configuration
     bytes32 public constant CONFIG_MANAGER_ROLE = keccak256("CONFIG_MANAGER_ROLE");
 
-    /// @notice ERC-1271 magic value for isValidSignature(bytes32,bytes)
-    bytes4 internal constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
-
-    /// @notice Legacy magic value for isValidSignature(bytes,bytes) - Safe 1.4.1 compatibility
-    bytes4 internal constant LEGACY_MAGIC_VALUE = 0x20c13b0b;
-
-    /// @notice Invalid signature value
-    bytes4 internal constant INVALID_SIGNATURE = 0xffffffff;
+    /// @notice Role required to pause/unpause the contract
+    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     /// @notice Precision for percentage calculations (1e18 = 100%)
     uint256 public constant PRECISION = 1e18;
 
-    /// @notice Days per year for APR calculation
-    uint256 public constant DAYS_PER_YEAR = 365;
+    /// @notice Seconds per year for APR calculation (365 days)
+    uint256 public constant SECONDS_PER_YEAR = 365 days;
 
     /// @notice Time interval for fallback processing (24 hours)
     uint256 public constant FALLBACK_INTERVAL = 24 hours;
+
+    /// @notice Maximum holding period (1 year in seconds)
+    uint256 public constant MAX_HOLDING_PERIOD = 365 days;
 
     /// @notice Storage slot for keeper data
     bytes32 private constant KEEPER_STORAGE_SLOT = keccak256("yieldnest.storage.strategyKeeper");
@@ -101,7 +99,6 @@ contract StrategyKeeper is
     /// @notice Storage struct for the keeper
     struct KeeperStorage {
         KeeperConfig config;
-        mapping(bytes32 => bool) approvedHashes;
         uint256 lastProcessedTimestamp;
     }
 
@@ -126,16 +123,18 @@ contract StrategyKeeper is
 
         __AccessControlEnumerable_init();
         __ReentrancyGuard_init();
+        __Pausable_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(CONFIG_MANAGER_ROLE, admin);
+        _grantRole(PAUSER_ROLE, admin);
 
         _setConfig(config_);
     }
 
     /// @notice Execute the keeper logic to process inflows
     /// @dev Requires KEEPER_ROLE. All-or-nothing execution.
-    function processInflows() external onlyRole(KEEPER_ROLE) nonReentrant {
+    function processInflows() external onlyRole(KEEPER_ROLE) nonReentrant whenNotPaused {
         KeeperStorage storage s = _getKeeperStorage();
         KeeperConfig memory cfg = s.config;
 
@@ -154,8 +153,8 @@ contract StrategyKeeper is
         uint256 available = safeBalance - cfg.minResidual;
 
         // 4. Calculate yield holdback
-        // interest = available * apr * holdingDays / 365 / PRECISION
-        uint256 interest = (available * cfg.apr * cfg.holdingDays) / DAYS_PER_YEAR / PRECISION;
+        // interest = available * apr * holdingPeriod / SECONDS_PER_YEAR / PRECISION
+        uint256 interest = (available * cfg.apr * cfg.holdingPeriod) / SECONDS_PER_YEAR / PRECISION;
         uint256 principal = available - interest;
 
         // 5. Calculate fee split: 1/feeFraction to fee wallet, (feeFraction-1)/feeFraction to stream
@@ -263,6 +262,9 @@ contract StrategyKeeper is
     /// @param cfg Keeper configuration
     /// @param amount Amount to stream
     function _createSablierStream(KeeperConfig memory cfg, uint256 amount) internal {
+        // Validate amount fits in uint128 (Sablier requirement)
+        if (amount > type(uint128).max) revert StreamAmountExceedsUint128(amount);
+
         // First approve Sablier to spend the stream amount
         bytes memory approveData = abi.encodeCall(IERC20.approve, (cfg.sablier, amount));
         _executeSafeTransaction(cfg, cfg.baseAsset, 0, approveData);
@@ -277,7 +279,7 @@ contract StrategyKeeper is
             transferable: true,
             timestamps: ISablierLockupLinear.Timestamps({
                 start: uint40(block.timestamp),
-                end: uint40(block.timestamp + cfg.holdingDays * 1 days)
+                end: uint40(block.timestamp + cfg.holdingPeriod)
             }),
             shape: ""
         });
@@ -291,158 +293,19 @@ contract StrategyKeeper is
         _executeSafeTransaction(cfg, cfg.sablier, 0, createData);
     }
 
-    /// @notice Execute a transaction from the Gnosis Safe with contract signatures
+    /// @notice Execute a transaction from the Gnosis Safe as a module
+    /// @dev The keeper must be registered as a module on the Safe
     /// @param cfg Keeper configuration
     /// @param to Target address
     /// @param value ETH value
     /// @param data Call data
-    /// @return returnData Return data from the call
-    function _executeSafeTransaction(KeeperConfig memory cfg, address to, uint256 value, bytes memory data)
-        internal
-        returns (bytes memory returnData)
-    {
+    function _executeSafeTransaction(KeeperConfig memory cfg, address to, uint256 value, bytes memory data) internal {
         IGnosisSafe safe = IGnosisSafe(cfg.safe);
-        uint256 nonce = safe.nonce();
 
-        // Get transaction hash
-        bytes32 txHash = safe.getTransactionHash(
-            to,
-            value,
-            data,
-            IGnosisSafe.Operation.Call,
-            0, // safeTxGas
-            0, // baseGas
-            0, // gasPrice
-            address(0), // gasToken
-            address(0), // refundReceiver
-            nonce
-        );
-
-        // Approve hash on this contract (for ERC-1271)
-        KeeperStorage storage s = _getKeeperStorage();
-        s.approvedHashes[txHash] = true;
-
-        // Approve hash on companion
-        IKeeperCompanion(cfg.companion).approveHash(txHash);
-
-        // Build contract signatures
-        bytes memory signatures = _buildContractSignatures(address(this), cfg.companion);
-
-        // Execute transaction
-        bool success = safe.execTransaction(
-            to,
-            value,
-            data,
-            IGnosisSafe.Operation.Call,
-            0, // safeTxGas
-            0, // baseGas
-            0, // gasPrice
-            address(0), // gasToken
-            payable(0), // refundReceiver
-            signatures
-        );
+        // Execute transaction as module
+        bool success = safe.execTransactionFromModule(to, value, data, IGnosisSafe.Operation.Call);
 
         if (!success) revert SafeExecutionFailed();
-
-        // Clean up approved hashes
-        s.approvedHashes[txHash] = false;
-        IKeeperCompanion(cfg.companion).revokeHash(txHash);
-
-        // For calls that return data, we need to handle it separately
-        // The Safe's execTransaction returns bool, not the call's return data
-        // For createWithTimestampsLL, we need to make a static call to get the expected stream ID
-        // However, since Safe doesn't return call data, we'll use events or other mechanisms
-        // For now, return empty - stream ID can be retrieved from events
-        return "";
-    }
-
-    /// @notice Build contract signatures for two signers
-    /// @dev Signers must be sorted in ascending order by address
-    /// @param signer1 First signer address
-    /// @param signer2 Second signer address
-    /// @return signatures Packed signatures for Safe
-    function _buildContractSignatures(address signer1, address signer2)
-        internal
-        pure
-        returns (bytes memory signatures)
-    {
-        // Sort signers - Safe requires signatures in ascending order by signer address
-        address lower;
-        address higher;
-        if (uint160(signer1) < uint160(signer2)) {
-            lower = signer1;
-            higher = signer2;
-        } else {
-            lower = signer2;
-            higher = signer1;
-        }
-
-        // Contract signature format:
-        // For each signer: r (32 bytes) = address, s (32 bytes) = data offset, v (1 byte) = 0
-        // Data section: length (32 bytes) + signature data
-
-        // Static part: 2 signatures * 65 bytes = 130 bytes
-        // Dynamic part: 2 * (32 bytes length + 0 bytes data) = 64 bytes
-        // Total: 194 bytes
-
-        // Offsets are relative to the start of the signatures data
-        // First signer's data starts at offset 130 (after both static parts)
-        // Second signer's data starts at offset 130 + 32 = 162 (after first length)
-
-        uint256 offset1 = 130; // Offset to first signature data
-        uint256 offset2 = 162; // Offset to second signature data
-
-        signatures = abi.encodePacked(
-            // First signer (lower address)
-            bytes32(uint256(uint160(lower))), // r = signer address
-            bytes32(offset1), // s = offset to data
-            uint8(0), // v = 0 for contract signature
-            // Second signer (higher address)
-            bytes32(uint256(uint160(higher))), // r = signer address
-            bytes32(offset2), // s = offset to data
-            uint8(0), // v = 0 for contract signature
-            // Dynamic data for first signer (empty signature)
-            bytes32(0), // length = 0
-            // Dynamic data for second signer (empty signature)
-            bytes32(0) // length = 0
-        );
-    }
-
-    /// @notice ERC-1271 signature validation for this contract
-    /// @param hash The hash to validate
-    /// @param signature The signature (unused)
-    /// @return magicValue ERC1271_MAGIC_VALUE if approved, INVALID_SIGNATURE otherwise
-    function isValidSignature(bytes32 hash, bytes calldata signature)
-        external
-        view
-        override
-        returns (bytes4 magicValue)
-    {
-        signature; // Silence unused variable warning
-
-        if (_getKeeperStorage().approvedHashes[hash]) {
-            return ERC1271_MAGIC_VALUE;
-        }
-        return INVALID_SIGNATURE;
-    }
-
-    /// @notice Legacy signature validation (Safe 1.4.1 compatibility)
-    /// @dev Safe 1.4.1 uses isValidSignature(bytes,bytes) with selector 0x20c13b0b
-    /// @param data The EIP-712 encoded message data
-    /// @param signature The signature (unused)
-    /// @return magicValue LEGACY_MAGIC_VALUE if approved, INVALID_SIGNATURE otherwise
-    function isValidSignature(bytes calldata data, bytes calldata signature)
-        external
-        view
-        returns (bytes4 magicValue)
-    {
-        signature; // Silence unused variable warning
-
-        bytes32 hash = keccak256(data);
-        if (_getKeeperStorage().approvedHashes[hash]) {
-            return LEGACY_MAGIC_VALUE;
-        }
-        return INVALID_SIGNATURE;
     }
 
     /// @notice Update the keeper configuration
@@ -457,28 +320,39 @@ contract StrategyKeeper is
         if (config_.vault == address(0)) revert ZeroAddress();
         if (config_.targetStrategy == address(0)) revert ZeroAddress();
         if (config_.safe == address(0)) revert ZeroAddress();
-        if (config_.companion == address(0)) revert ZeroAddress();
         if (config_.baseAsset == address(0)) revert ZeroAddress();
         if (config_.borrower == address(0)) revert ZeroAddress();
         if (config_.feeWallet == address(0)) revert ZeroAddress();
         if (config_.streamReceiver == address(0)) revert ZeroAddress();
         if (config_.sablier == address(0)) revert ZeroAddress();
         if (config_.apr == 0 || config_.apr > PRECISION) revert InvalidConfiguration();
-        if (config_.holdingDays == 0) revert InvalidConfiguration();
+        if (config_.holdingPeriod == 0) revert InvalidConfiguration();
+        if (config_.holdingPeriod > MAX_HOLDING_PERIOD) {
+            revert HoldingPeriodExceedsMaximum(config_.holdingPeriod, MAX_HOLDING_PERIOD);
+        }
         if (config_.minProcessingPercent > PRECISION) revert InvalidConfiguration();
         if (config_.feeFraction < 2) revert InvalidConfiguration();
-        if (config_.companion.code.length > 0 && Ownable(config_.companion).owner() != address(this)) {
-            revert InvalidCompanionOwner();
-        }
 
         _getKeeperStorage().config = config_;
-        emit ConfigUpdated();
+        emit ConfigUpdated(config_.vault, config_.safe, config_.apr, config_.holdingPeriod, config_.feeFraction);
     }
 
     /// @notice Get the current configuration
     /// @return config The current keeper configuration
     function getConfig() external view returns (KeeperConfig memory config) {
         return _getKeeperStorage().config;
+    }
+
+    /// @notice Pause the keeper
+    /// @dev Only callable by PAUSER_ROLE
+    function pause() external onlyRole(PAUSER_ROLE) {
+        _pause();
+    }
+
+    /// @notice Unpause the keeper
+    /// @dev Only callable by PAUSER_ROLE
+    function unpause() external onlyRole(PAUSER_ROLE) {
+        _unpause();
     }
 }
 

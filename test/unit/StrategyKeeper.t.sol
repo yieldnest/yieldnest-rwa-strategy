@@ -1,19 +1,14 @@
 // SPDX-License-Identifier: BSD-3-Clause
 pragma solidity ^0.8.28;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {TransparentUpgradeableProxy} from
     "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {StrategyKeeper, IStrategyKeeper} from "src/StrategyKeeper.sol";
-import {KeeperCompanion, IKeeperCompanion} from "src/KeeperCompanion.sol";
 
 contract StrategyKeeperTest is Test {
-    /// @notice ERC-1271 magic value for isValidSignature(bytes32,bytes)
-    bytes4 internal constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
-
     StrategyKeeper public keeper;
     StrategyKeeper public keeperImpl;
-    KeeperCompanion public companion;
 
     address public admin = address(0x1);
     address public keeperBot = address(0x2);
@@ -26,24 +21,22 @@ contract StrategyKeeperTest is Test {
     address public streamReceiver = address(0x9);
     address public sablier = address(0xA);
 
+    // 28 days in seconds
+    uint256 constant TWENTY_EIGHT_DAYS = 28 days;
+
     function setUp() public {
         // Deploy implementation
         keeperImpl = new StrategyKeeper();
 
-        // Pre-compute the proxy address to deploy companion first
-        // We'll use a temporary companion address during init, then update
-        address tempCompanion = address(0xBEEF);
-
-        // Deploy proxy with temporary companion address (non-zero)
+        // Deploy proxy - use this contract (the test) as the initial deployer so we can grant roles
         bytes memory initData = abi.encodeCall(
             StrategyKeeper.initialize,
             (
-                admin,
+                address(this), // Use test contract as initial admin
                 IStrategyKeeper.KeeperConfig({
                     vault: vault,
                     targetStrategy: targetStrategy,
                     safe: safe,
-                    companion: tempCompanion, // Temporary non-zero address
                     baseAsset: baseAsset,
                     borrower: borrower,
                     feeWallet: feeWallet,
@@ -52,7 +45,7 @@ contract StrategyKeeperTest is Test {
                     minThreshold: 10_000e6,
                     minResidual: 1_000e6,
                     apr: 0.121e18,
-                    holdingDays: 28,
+                    holdingPeriod: TWENTY_EIGHT_DAYS,
                     minProcessingPercent: 0.01e18,
                     feeFraction: 11
                 })
@@ -62,34 +55,16 @@ contract StrategyKeeperTest is Test {
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(keeperImpl), admin, initData);
         keeper = StrategyKeeper(address(proxy));
 
-        // Deploy companion with keeper as owner
-        companion = new KeeperCompanion(address(keeper));
-
-        // Update config with correct companion and grant roles
-        vm.startPrank(admin);
-        keeper.setConfig(
-            IStrategyKeeper.KeeperConfig({
-                vault: vault,
-                targetStrategy: targetStrategy,
-                safe: safe,
-                companion: address(companion),
-                baseAsset: baseAsset,
-                borrower: borrower,
-                feeWallet: feeWallet,
-                streamReceiver: streamReceiver,
-                sablier: sablier,
-                minThreshold: 10_000e6,
-                minResidual: 1_000e6,
-                apr: 0.121e18,
-                holdingDays: 28,
-                minProcessingPercent: 0.01e18,
-                feeFraction: 11
-            })
-        );
-
-        // Grant KEEPER_ROLE to bot
+        // Grant roles to admin and keeper bot
+        keeper.grantRole(keeper.DEFAULT_ADMIN_ROLE(), admin);
+        keeper.grantRole(keeper.CONFIG_MANAGER_ROLE(), admin);
         keeper.grantRole(keeper.KEEPER_ROLE(), keeperBot);
-        vm.stopPrank();
+        keeper.grantRole(keeper.PAUSER_ROLE(), admin);
+
+        // Renounce the test contract's roles
+        keeper.renounceRole(keeper.PAUSER_ROLE(), address(this));
+        keeper.renounceRole(keeper.CONFIG_MANAGER_ROLE(), address(this));
+        keeper.renounceRole(keeper.DEFAULT_ADMIN_ROLE(), address(this));
     }
 
     function test_initialization() public view {
@@ -97,7 +72,6 @@ contract StrategyKeeperTest is Test {
         assertEq(cfg.vault, vault);
         assertEq(cfg.targetStrategy, targetStrategy);
         assertEq(cfg.safe, safe);
-        assertEq(cfg.companion, address(companion));
         assertEq(cfg.baseAsset, baseAsset);
         assertEq(cfg.borrower, borrower);
         assertEq(cfg.feeWallet, feeWallet);
@@ -106,17 +80,14 @@ contract StrategyKeeperTest is Test {
         assertEq(cfg.minThreshold, 10_000e6);
         assertEq(cfg.minResidual, 1_000e6);
         assertEq(cfg.apr, 0.121e18);
-        assertEq(cfg.holdingDays, 28);
+        assertEq(cfg.holdingPeriod, TWENTY_EIGHT_DAYS);
     }
 
     function test_roles() public view {
         assertTrue(keeper.hasRole(keeper.DEFAULT_ADMIN_ROLE(), admin));
         assertTrue(keeper.hasRole(keeper.CONFIG_MANAGER_ROLE(), admin));
         assertTrue(keeper.hasRole(keeper.KEEPER_ROLE(), keeperBot));
-    }
-
-    function test_companionOwnership() public view {
-        assertEq(companion.owner(), address(keeper));
+        assertTrue(keeper.hasRole(keeper.PAUSER_ROLE(), admin));
     }
 
     function test_revertOnUnauthorizedKeeper() public {
@@ -133,7 +104,6 @@ contract StrategyKeeperTest is Test {
                 vault: vault,
                 targetStrategy: targetStrategy,
                 safe: safe,
-                companion: address(companion),
                 baseAsset: baseAsset,
                 borrower: borrower,
                 feeWallet: feeWallet,
@@ -142,7 +112,7 @@ contract StrategyKeeperTest is Test {
                 minThreshold: 10_000e6,
                 minResidual: 1_000e6,
                 apr: 0.121e18,
-                holdingDays: 28,
+                holdingPeriod: TWENTY_EIGHT_DAYS,
                 minProcessingPercent: 0.01e18,
                 feeFraction: 11
             })
@@ -157,7 +127,6 @@ contract StrategyKeeperTest is Test {
                 vault: address(0), // Zero address should revert
                 targetStrategy: targetStrategy,
                 safe: safe,
-                companion: address(companion),
                 baseAsset: baseAsset,
                 borrower: borrower,
                 feeWallet: feeWallet,
@@ -166,7 +135,7 @@ contract StrategyKeeperTest is Test {
                 minThreshold: 10_000e6,
                 minResidual: 1_000e6,
                 apr: 0.121e18,
-                holdingDays: 28,
+                holdingPeriod: TWENTY_EIGHT_DAYS,
                 minProcessingPercent: 0.01e18,
                 feeFraction: 11
             })
@@ -181,7 +150,6 @@ contract StrategyKeeperTest is Test {
                 vault: vault,
                 targetStrategy: targetStrategy,
                 safe: safe,
-                companion: address(companion),
                 baseAsset: baseAsset,
                 borrower: borrower,
                 feeWallet: feeWallet,
@@ -190,7 +158,7 @@ contract StrategyKeeperTest is Test {
                 minThreshold: 10_000e6,
                 minResidual: 1_000e6,
                 apr: 0, // Zero APR should revert
-                holdingDays: 28,
+                holdingPeriod: TWENTY_EIGHT_DAYS,
                 minProcessingPercent: 0.01e18,
                 feeFraction: 11
             })
@@ -205,7 +173,6 @@ contract StrategyKeeperTest is Test {
                 vault: vault,
                 targetStrategy: targetStrategy,
                 safe: safe,
-                companion: address(companion),
                 baseAsset: baseAsset,
                 borrower: borrower,
                 feeWallet: feeWallet,
@@ -214,14 +181,14 @@ contract StrategyKeeperTest is Test {
                 minThreshold: 10_000e6,
                 minResidual: 1_000e6,
                 apr: 2e18, // 200% APR exceeds max (100%)
-                holdingDays: 28,
+                holdingPeriod: TWENTY_EIGHT_DAYS,
                 minProcessingPercent: 0.01e18,
                 feeFraction: 11
             })
         );
     }
 
-    function test_revertOnZeroHoldingDays() public {
+    function test_revertOnZeroHoldingPeriod() public {
         vm.prank(admin);
         vm.expectRevert(IStrategyKeeper.InvalidConfiguration.selector);
         keeper.setConfig(
@@ -229,7 +196,6 @@ contract StrategyKeeperTest is Test {
                 vault: vault,
                 targetStrategy: targetStrategy,
                 safe: safe,
-                companion: address(companion),
                 baseAsset: baseAsset,
                 borrower: borrower,
                 feeWallet: feeWallet,
@@ -238,7 +204,122 @@ contract StrategyKeeperTest is Test {
                 minThreshold: 10_000e6,
                 minResidual: 1_000e6,
                 apr: 0.121e18,
-                holdingDays: 0, // Zero days should revert
+                holdingPeriod: 0, // Zero should revert
+                minProcessingPercent: 0.01e18,
+                feeFraction: 11
+            })
+        );
+    }
+
+    function test_revertOnHoldingPeriodExceedsMaximum() public {
+        uint256 tooLong = 366 days; // Exceeds max of 365 days
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IStrategyKeeper.HoldingPeriodExceedsMaximum.selector, tooLong, 365 days));
+        keeper.setConfig(
+            IStrategyKeeper.KeeperConfig({
+                vault: vault,
+                targetStrategy: targetStrategy,
+                safe: safe,
+                baseAsset: baseAsset,
+                borrower: borrower,
+                feeWallet: feeWallet,
+                streamReceiver: streamReceiver,
+                sablier: sablier,
+                minThreshold: 10_000e6,
+                minResidual: 1_000e6,
+                apr: 0.121e18,
+                holdingPeriod: tooLong,
+                minProcessingPercent: 0.01e18,
+                feeFraction: 11
+            })
+        );
+    }
+
+    function test_holdingPeriodAtMaximum() public {
+        vm.prank(admin);
+        keeper.setConfig(
+            IStrategyKeeper.KeeperConfig({
+                vault: vault,
+                targetStrategy: targetStrategy,
+                safe: safe,
+                baseAsset: baseAsset,
+                borrower: borrower,
+                feeWallet: feeWallet,
+                streamReceiver: streamReceiver,
+                sablier: sablier,
+                minThreshold: 10_000e6,
+                minResidual: 1_000e6,
+                apr: 0.121e18,
+                holdingPeriod: 365 days, // Max allowed
+                minProcessingPercent: 0.01e18,
+                feeFraction: 11
+            })
+        );
+        assertEq(keeper.getConfig().holdingPeriod, 365 days);
+    }
+
+    function test_pauseAndUnpause() public {
+        // Should not be paused initially
+        assertFalse(keeper.paused());
+
+        // Pause
+        vm.prank(admin);
+        keeper.pause();
+        assertTrue(keeper.paused());
+
+        // Unpause
+        vm.prank(admin);
+        keeper.unpause();
+        assertFalse(keeper.paused());
+    }
+
+    function test_revertOnProcessInflowsWhenPaused() public {
+        // Pause the keeper
+        vm.prank(admin);
+        keeper.pause();
+
+        // Try to process inflows - should revert
+        vm.prank(keeperBot);
+        vm.expectRevert();
+        keeper.processInflows();
+    }
+
+    function test_revertOnUnauthorizedPause() public {
+        vm.prank(address(0xBEEF));
+        vm.expectRevert();
+        keeper.pause();
+    }
+
+    function test_revertOnUnauthorizedUnpause() public {
+        // First pause it
+        vm.prank(admin);
+        keeper.pause();
+
+        // Try to unpause without permission
+        vm.prank(address(0xBEEF));
+        vm.expectRevert();
+        keeper.unpause();
+    }
+
+    function test_configUpdatedEventEmitsDetails() public {
+        uint256 newHoldingPeriod = 30 days;
+        vm.prank(admin);
+        vm.expectEmit(true, true, false, true);
+        emit IStrategyKeeper.ConfigUpdated(vault, safe, 0.15e18, newHoldingPeriod, 11);
+        keeper.setConfig(
+            IStrategyKeeper.KeeperConfig({
+                vault: vault,
+                targetStrategy: targetStrategy,
+                safe: safe,
+                baseAsset: baseAsset,
+                borrower: borrower,
+                feeWallet: feeWallet,
+                streamReceiver: streamReceiver,
+                sablier: sablier,
+                minThreshold: 10_000e6,
+                minResidual: 1_000e6,
+                apr: 0.15e18,
+                holdingPeriod: newHoldingPeriod,
                 minProcessingPercent: 0.01e18,
                 feeFraction: 11
             })
@@ -247,7 +328,7 @@ contract StrategyKeeperTest is Test {
 
     function test_yieldCalculation() public pure {
         // Test the yield calculation formula:
-        // interest = available * apr * holdingDays / 365 / PRECISION
+        // interest = available * apr * holdingPeriod / SECONDS_PER_YEAR / PRECISION
         //
         // Example from spec:
         // Amount: 34,500 USDC
@@ -257,19 +338,13 @@ contract StrategyKeeperTest is Test {
 
         uint256 available = 34_500e6; // 34,500 USDC (6 decimals)
         uint256 apr = 0.121e18; // 12.1%
-        uint256 holdingDays = 28;
+        uint256 holdingPeriod = 28 days; // 28 days in seconds
         uint256 PRECISION = 1e18;
-        uint256 DAYS_PER_YEAR = 365;
+        uint256 SECONDS_PER_YEAR = 365 days;
 
-        uint256 interest = (available * apr * holdingDays) / DAYS_PER_YEAR / PRECISION;
+        uint256 interest = (available * apr * holdingPeriod) / SECONDS_PER_YEAR / PRECISION;
 
         // Expected: ~320.24 USDC = 320_235_616 (6 decimals)
-        // Our calculation: 34500e6 * 121e15 * 28 / 365 / 1e18
-        //                = 34500 * 121 * 28 * 1e6 * 1e15 / 365 / 1e18
-        //                = 34500 * 121 * 28 * 1e6 / 365 / 1e3
-        //                = 116886000 * 1e6 / 365000
-        //                = 320235616 (rounding may differ slightly)
-
         // Allow for small rounding difference
         assertApproxEqAbs(interest, 320_235_616, 1e3); // Within 0.001 USDC
 
@@ -280,79 +355,5 @@ contract StrategyKeeperTest is Test {
         assertEq(fee + streamAmount, interest);
         assertApproxEqRel(fee, interest / 11, 0.01e18); // Within 1%
         assertApproxEqRel(streamAmount, (interest * 10) / 11, 0.01e18); // Within 1%
-    }
-}
-
-contract KeeperCompanionTest is Test {
-    /// @notice ERC-1271 magic value for isValidSignature(bytes32,bytes)
-    bytes4 internal constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
-
-    KeeperCompanion public companion;
-    address public keeper = address(0x1);
-    address public other = address(0x2);
-
-    function setUp() public {
-        companion = new KeeperCompanion(keeper);
-    }
-
-    function test_ownership() public view {
-        assertEq(companion.owner(), keeper);
-    }
-
-    function test_approveHash() public {
-        bytes32 hash = keccak256("test");
-
-        assertFalse(companion.isHashApproved(hash));
-
-        vm.prank(keeper);
-        companion.approveHash(hash);
-
-        assertTrue(companion.isHashApproved(hash));
-    }
-
-    function test_revokeHash() public {
-        bytes32 hash = keccak256("test");
-
-        vm.prank(keeper);
-        companion.approveHash(hash);
-        assertTrue(companion.isHashApproved(hash));
-
-        vm.prank(keeper);
-        companion.revokeHash(hash);
-        assertFalse(companion.isHashApproved(hash));
-    }
-
-    function test_isValidSignature() public {
-        bytes32 hash = keccak256("test");
-
-        // Not approved - should return invalid
-        bytes4 result = companion.isValidSignature(hash, "");
-        assertEq(result, bytes4(0xffffffff));
-
-        // Approve and check again
-        vm.prank(keeper);
-        companion.approveHash(hash);
-
-        result = companion.isValidSignature(hash, "");
-        assertEq(result, ERC1271_MAGIC_VALUE, "approved hash should return ERC1271_MAGIC_VALUE");
-    }
-
-    function test_revertOnUnauthorizedApprove() public {
-        bytes32 hash = keccak256("test");
-
-        vm.prank(other);
-        vm.expectRevert();
-        companion.approveHash(hash);
-    }
-
-    function test_revertOnUnauthorizedRevoke() public {
-        bytes32 hash = keccak256("test");
-
-        vm.prank(keeper);
-        companion.approveHash(hash);
-
-        vm.prank(other);
-        vm.expectRevert();
-        companion.revokeHash(hash);
     }
 }

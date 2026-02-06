@@ -5,36 +5,33 @@ import {Script, console} from "forge-std/Script.sol";
 import {TransparentUpgradeableProxy} from
     "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {StrategyKeeper, IStrategyKeeper} from "src/StrategyKeeper.sol";
-import {KeeperCompanion} from "src/KeeperCompanion.sol";
 import {MainnetStrategyActors} from "@script/Actors.sol";
 import {MainnetKeeperContracts} from "@script/Contracts.sol";
 
 /// @title DeployKeeper
-/// @notice Deployment script for StrategyKeeper and KeeperCompanion
+/// @notice Deployment script for StrategyKeeper (module-based execution)
 contract DeployKeeper is Script {
     // Deployment parameters (customize these before deployment)
     uint256 public minThreshold = 10_000e6; // 10,000 USDC minimum to trigger allocation
     uint256 public minResidual = 1_000e6; // Keep 1,000 USDC in Safe
     uint256 public apr = 0.121e18; // 12.1% APR
-    uint256 public holdingDays = 28;
+    uint256 public holdingPeriod = 28 days;
     uint256 public minProcessingPercent = 0.01e18; // 1%
     uint256 public feeFraction = 11; // 1/11 to fee wallet, 10/11 to stream
 
     StrategyKeeper public keeperImplementation;
     StrategyKeeper public keeper;
-    KeeperCompanion public companion;
 
     function run() external {
         MainnetStrategyActors actors = new MainnetStrategyActors();
         address admin = actors.ADMIN();
         address deployer = msg.sender;
 
-        // Build config with temporary companion address
+        // Build config
         IStrategyKeeper.KeeperConfig memory config = IStrategyKeeper.KeeperConfig({
             vault: MainnetKeeperContracts.YNRWAX,
             targetStrategy: MainnetKeeperContracts.FLEX_STRATEGY,
             safe: actors.SAFE(),
-            companion: address(1), // Temporary, will update after companion deployment
             baseAsset: MainnetKeeperContracts.USDC,
             borrower: MainnetKeeperContracts.BORROWER,
             feeWallet: MainnetKeeperContracts.FEE_WALLET,
@@ -43,7 +40,7 @@ contract DeployKeeper is Script {
             minThreshold: minThreshold,
             minResidual: minResidual,
             apr: apr,
-            holdingDays: holdingDays,
+            holdingPeriod: holdingPeriod,
             minProcessingPercent: minProcessingPercent,
             feeFraction: feeFraction
         });
@@ -54,7 +51,7 @@ contract DeployKeeper is Script {
         keeperImplementation = new StrategyKeeper();
         console.log("StrategyKeeper implementation:", address(keeperImplementation));
 
-        // 2. Deploy proxy with deployer as initial admin (so we can call setConfig)
+        // 2. Deploy proxy with deployer as initial admin (so we can transfer roles)
         bytes memory initData = abi.encodeCall(StrategyKeeper.initialize, (deployer, config));
 
         TransparentUpgradeableProxy proxy =
@@ -63,15 +60,7 @@ contract DeployKeeper is Script {
         console.log("StrategyKeeper proxy:", address(keeper));
         console.log("Proxy admin:", admin);
 
-        // 3. Deploy KeeperCompanion with keeper as owner
-        companion = new KeeperCompanion(address(keeper));
-        console.log("KeeperCompanion:", address(companion));
-
-        // 4. Update config with correct companion address
-        config.companion = address(companion);
-        keeper.setConfig(config);
-
-        // 5. Transfer roles to admin and renounce deployer roles
+        // 3. Transfer roles to admin and renounce deployer roles
         bytes32 defaultAdminRole = keeper.DEFAULT_ADMIN_ROLE();
         bytes32 configManagerRole = keeper.CONFIG_MANAGER_ROLE();
 
@@ -92,11 +81,11 @@ contract DeployKeeper is Script {
         console.log("=== Deployment Summary ===");
         console.log("StrategyKeeper Implementation:", address(keeperImplementation));
         console.log("StrategyKeeper Proxy:", address(keeper));
-        console.log("KeeperCompanion:", address(companion));
         console.log("");
         console.log("=== Configuration ===");
         console.log("Vault (ynRWAx):", config.vault);
         console.log("Target Strategy:", config.targetStrategy);
+        console.log("Safe:", config.safe);
         console.log("Fee Wallet:", config.feeWallet);
         console.log("Stream Receiver (Rewards Sweeper):", config.streamReceiver);
         console.log("Borrower:", config.borrower);
@@ -106,10 +95,10 @@ contract DeployKeeper is Script {
         console.log("Deployer renounced all roles");
         console.log("");
         console.log("=== Required Manual Steps ===");
-        console.log("1. Add StrategyKeeper as Safe owner:", address(keeper));
-        console.log("2. Add KeeperCompanion as Safe owner:", address(companion));
-        console.log("3. Grant PROCESSOR_ROLE to StrategyKeeper on vault");
-        console.log("4. Grant KEEPER_ROLE to keeper bot address");
+        console.log("1. Enable StrategyKeeper as a module on the Safe:", address(keeper));
+        console.log("   - Execute: Safe.enableModule(keeperAddress)");
+        console.log("2. Grant PROCESSOR_ROLE to StrategyKeeper on vault");
+        console.log("3. Grant KEEPER_ROLE to keeper bot address");
         console.log("");
         console.log("Deployment saved to: deployments/keeper-deployment.json");
     }
@@ -120,7 +109,6 @@ contract DeployKeeper is Script {
         // Deployed contracts
         vm.serializeAddress(obj, "keeperImplementation", address(keeperImplementation));
         vm.serializeAddress(obj, "keeperProxy", address(keeper));
-        vm.serializeAddress(obj, "companion", address(companion));
         vm.serializeAddress(obj, "admin", admin);
 
         // Configuration addresses
@@ -137,7 +125,7 @@ contract DeployKeeper is Script {
         vm.serializeUint(obj, "minThreshold", config.minThreshold);
         vm.serializeUint(obj, "minResidual", config.minResidual);
         vm.serializeUint(obj, "apr", config.apr);
-        vm.serializeUint(obj, "holdingDays", config.holdingDays);
+        vm.serializeUint(obj, "holdingPeriod", config.holdingPeriod);
         vm.serializeUint(obj, "minProcessingPercent", config.minProcessingPercent);
         vm.serializeUint(obj, "feeFraction", config.feeFraction);
 

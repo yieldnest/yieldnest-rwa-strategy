@@ -8,9 +8,9 @@ import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.so
 import {Safe} from "lib/safe-smart-account/contracts/Safe.sol";
 import {SafeProxyFactory} from "lib/safe-smart-account/contracts/proxies/SafeProxyFactory.sol";
 import {SafeProxy} from "lib/safe-smart-account/contracts/proxies/SafeProxy.sol";
+import {Enum} from "lib/safe-smart-account/contracts/libraries/Enum.sol";
 import {IAccessControl} from "lib/openzeppelin-contracts/contracts/access/IAccessControl.sol";
 import {StrategyKeeper, IStrategyKeeper} from "src/StrategyKeeper.sol";
-import {KeeperCompanion} from "src/KeeperCompanion.sol";
 
 interface IVaultRoles is IAccessControl {
     function PROCESSOR_ROLE() external view returns (bytes32);
@@ -29,15 +29,9 @@ interface ISablierLockup {
 }
 
 /// @title StrategyKeeperMainnetTest
-/// @notice Integration tests for StrategyKeeper with mainnet fork
+/// @notice Integration tests for StrategyKeeper with mainnet fork using module execution
 /// @dev Run with: forge test --match-path "test/mainnet/strategykeeper/*.sol" --fork-url <RPC_URL>
 contract StrategyKeeperMainnetTest is Test {
-    /// @notice ERC-1271 magic value for isValidSignature(bytes32,bytes)
-    bytes4 internal constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
-
-    /// @notice Invalid signature value
-    bytes4 internal constant INVALID_SIGNATURE = 0xffffffff;
-
     // Mainnet addresses
     address constant VAULT = 0x01Ba69727E2860b37bc1a2bd56999c1aFb4C15D8; // ynRWAx
     address constant TARGET_STRATEGY = 0xF6e1443e3F70724cec8C0a779C7C35A8DcDA928B;
@@ -58,21 +52,25 @@ contract StrategyKeeperMainnetTest is Test {
     address public keeperBot;
     address public streamReceiver;
 
+    // EOA owner for the Safe
+    uint256 public eoaOwnerPk = 0xA11CE;
+    address public eoaOwner;
+
     // Contracts
     StrategyKeeper public keeper;
     StrategyKeeper public keeperImpl;
-    KeeperCompanion public companion;
     Safe public safe;
 
     function setUp() public {
         admin = makeAddr("admin");
         keeperBot = makeAddr("keeperBot");
         streamReceiver = makeAddr("streamReceiver");
+        eoaOwner = vm.addr(eoaOwnerPk);
 
         // Deploy keeper implementation
         keeperImpl = new StrategyKeeper();
 
-        // Deploy proxy with placeholder safe/companion
+        // Deploy proxy with placeholder safe
         bytes memory initData = abi.encodeCall(
             StrategyKeeper.initialize,
             (
@@ -81,7 +79,6 @@ contract StrategyKeeperMainnetTest is Test {
                     vault: VAULT,
                     targetStrategy: TARGET_STRATEGY,
                     safe: address(1), // placeholder
-                    companion: address(0xBEEF), // placeholder
                     baseAsset: USDC,
                     borrower: BORROWER,
                     feeWallet: FEE_WALLET,
@@ -90,7 +87,7 @@ contract StrategyKeeperMainnetTest is Test {
                     minThreshold: 10_000e6,
                     minResidual: 1_000e6,
                     apr: 0.121e18,
-                    holdingDays: 28,
+                    holdingPeriod: 28 days,
                     minProcessingPercent: 0.01e18, // 1%
                     feeFraction: 11
                 })
@@ -100,10 +97,7 @@ contract StrategyKeeperMainnetTest is Test {
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(keeperImpl), admin, initData);
         keeper = StrategyKeeper(address(proxy));
 
-        // Deploy companion
-        companion = new KeeperCompanion(address(keeper));
-
-        // Deploy real Safe with keeper + companion as owners
+        // Deploy Safe with keeper as module
         safe = _deploySafe();
 
         // Update keeper config with real addresses
@@ -113,7 +107,6 @@ contract StrategyKeeperMainnetTest is Test {
                 vault: VAULT,
                 targetStrategy: TARGET_STRATEGY,
                 safe: address(safe),
-                companion: address(companion),
                 baseAsset: USDC,
                 borrower: BORROWER,
                 feeWallet: FEE_WALLET,
@@ -122,7 +115,7 @@ contract StrategyKeeperMainnetTest is Test {
                 minThreshold: 10_000e6,
                 minResidual: 1_000e6,
                 apr: 0.121e18,
-                holdingDays: 28,
+                holdingPeriod: 28 days,
                 minProcessingPercent: 0.01e18, // 1%
                 feeFraction: 11
             })
@@ -141,20 +134,14 @@ contract StrategyKeeperMainnetTest is Test {
     }
 
     function _deploySafe() internal returns (Safe) {
-        address[] memory owners = new address[](2);
-        owners[0] = address(keeper);
-        owners[1] = address(companion);
-
-        // Sort owners (Safe requires ascending order)
-        if (uint160(owners[0]) > uint160(owners[1])) {
-            (owners[0], owners[1]) = (owners[1], owners[0]);
-        }
+        address[] memory owners = new address[](1);
+        owners[0] = eoaOwner;
 
         bytes memory setupData = abi.encodeCall(
             Safe.setup,
             (
                 owners,
-                2, // threshold
+                1, // threshold
                 address(0),
                 "",
                 address(0),
@@ -166,7 +153,24 @@ contract StrategyKeeperMainnetTest is Test {
 
         SafeProxyFactory factory = SafeProxyFactory(SAFE_PROXY_FACTORY);
         SafeProxy safeProxy = factory.createProxyWithNonce(SAFE_SINGLETON, setupData, block.timestamp);
-        return Safe(payable(address(safeProxy)));
+        Safe _safe = Safe(payable(address(safeProxy)));
+
+        // Enable keeper as a module on the Safe
+        bytes memory enableModuleData = abi.encodeWithSignature("enableModule(address)", address(keeper));
+        bytes32 txHash = _safe.getTransactionHash(
+            address(_safe), 0, enableModuleData, Enum.Operation.Call, 0, 0, 0, address(0), address(0), _safe.nonce()
+        );
+
+        // Sign the transaction with EOA owner
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(eoaOwnerPk, txHash);
+        bytes memory signature = abi.encodePacked(r, s, v);
+
+        // Execute enableModule transaction
+        _safe.execTransaction(
+            address(_safe), 0, enableModuleData, Enum.Operation.Call, 0, 0, 0, address(0), payable(0), signature
+        );
+
+        return _safe;
     }
 
     function test_initialization() public view {
@@ -175,7 +179,6 @@ contract StrategyKeeperMainnetTest is Test {
         assertEq(cfg.vault, VAULT, "vault mismatch");
         assertEq(cfg.targetStrategy, TARGET_STRATEGY, "targetStrategy mismatch");
         assertEq(cfg.safe, address(safe), "safe mismatch");
-        assertEq(cfg.companion, address(companion), "companion mismatch");
         assertEq(cfg.baseAsset, USDC, "baseAsset mismatch");
         assertEq(cfg.borrower, BORROWER, "borrower mismatch");
         assertEq(cfg.feeWallet, FEE_WALLET, "feeWallet mismatch");
@@ -184,15 +187,15 @@ contract StrategyKeeperMainnetTest is Test {
         assertEq(cfg.minThreshold, 10_000e6, "minThreshold mismatch");
         assertEq(cfg.minResidual, 1_000e6, "minResidual mismatch");
         assertEq(cfg.apr, 0.121e18, "apr mismatch");
-        assertEq(cfg.holdingDays, 28, "holdingDays mismatch");
+        assertEq(cfg.holdingPeriod, 28 days, "holdingPeriod mismatch");
         assertEq(cfg.minProcessingPercent, 0.01e18, "minProcessingPercent mismatch");
     }
 
     function test_safeSetup() public view {
-        assertTrue(safe.isOwner(address(keeper)), "keeper should be safe owner");
-        assertTrue(safe.isOwner(address(companion)), "companion should be safe owner");
-        assertEq(safe.getThreshold(), 2, "safe threshold should be 2");
-        assertEq(safe.getOwners().length, 2, "safe should have 2 owners");
+        assertTrue(safe.isModuleEnabled(address(keeper)), "keeper should be enabled as module");
+        assertTrue(safe.isOwner(eoaOwner), "EOA should be safe owner");
+        assertEq(safe.getThreshold(), 1, "safe threshold should be 1");
+        assertEq(safe.getOwners().length, 1, "safe should have 1 owner");
     }
 
     function test_safeBalance() public view {
@@ -203,10 +206,7 @@ contract StrategyKeeperMainnetTest is Test {
         assertTrue(keeper.hasRole(keeper.DEFAULT_ADMIN_ROLE(), admin), "admin should have DEFAULT_ADMIN_ROLE");
         assertTrue(keeper.hasRole(keeper.CONFIG_MANAGER_ROLE(), admin), "admin should have CONFIG_MANAGER_ROLE");
         assertTrue(keeper.hasRole(keeper.KEEPER_ROLE(), keeperBot), "keeperBot should have KEEPER_ROLE");
-    }
-
-    function test_companionOwnership() public view {
-        assertEq(companion.owner(), address(keeper), "keeper should own companion");
+        assertTrue(keeper.hasRole(keeper.PAUSER_ROLE(), admin), "admin should have PAUSER_ROLE");
     }
 
     function test_vaultExists() public view {
@@ -232,9 +232,11 @@ contract StrategyKeeperMainnetTest is Test {
         // 100000 * 0.121 * 28 / 365 = 928.22
         uint256 available = 100_000e6;
         uint256 apr = 0.121e18;
-        uint256 holdingDays = 28;
+        uint256 holdingPeriod = 28 days;
+        uint256 SECONDS_PER_YEAR = 365 days;
+        uint256 PRECISION = 1e18;
 
-        uint256 interest = (available * apr * holdingDays) / 365 / 1e18;
+        uint256 interest = (available * apr * holdingPeriod) / SECONDS_PER_YEAR / PRECISION;
 
         assertApproxEqAbs(interest, 928_219_178, 1e3, "interest calculation mismatch");
 
@@ -254,33 +256,6 @@ contract StrategyKeeperMainnetTest is Test {
         vm.prank(address(0xDEAD));
         vm.expectRevert();
         keeper.setConfig(cfg);
-    }
-
-    function test_companionHashApproval() public {
-        bytes32 testHash = keccak256("test");
-
-        assertFalse(companion.isHashApproved(testHash), "hash should not be approved initially");
-
-        vm.prank(address(keeper));
-        companion.approveHash(testHash);
-        assertTrue(companion.isHashApproved(testHash), "hash should be approved after approveHash");
-
-        vm.prank(address(keeper));
-        companion.revokeHash(testHash);
-        assertFalse(companion.isHashApproved(testHash), "hash should not be approved after revokeHash");
-    }
-
-    function test_companionIsValidSignature() public {
-        bytes32 testHash = keccak256("test");
-
-        assertEq(companion.isValidSignature(testHash, ""), INVALID_SIGNATURE, "unapproved hash should return invalid");
-
-        vm.prank(address(keeper));
-        companion.approveHash(testHash);
-
-        assertEq(
-            companion.isValidSignature(testHash, ""), ERC1271_MAGIC_VALUE, "approved hash should return magic value"
-        );
     }
 
     function test_configValidation_zeroVault() public {
@@ -310,9 +285,9 @@ contract StrategyKeeperMainnetTest is Test {
         keeper.setConfig(cfg);
     }
 
-    function test_configValidation_zeroHoldingDays() public {
+    function test_configValidation_zeroHoldingPeriod() public {
         IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
-        cfg.holdingDays = 0;
+        cfg.holdingPeriod = 0;
 
         vm.prank(admin);
         vm.expectRevert(IStrategyKeeper.InvalidConfiguration.selector);
@@ -333,14 +308,14 @@ contract StrategyKeeperMainnetTest is Test {
         // Calculate expected amounts
         IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
         uint256 available = safeBalanceBefore - cfg.minResidual;
-        uint256 interest = (available * cfg.apr * cfg.holdingDays) / 365 / 1e18;
+        uint256 interest = (available * cfg.apr * cfg.holdingPeriod) / 365 days / 1e18;
         uint256 principal = available - interest;
         uint256 fee = interest / cfg.feeFraction;
         uint256 streamAmount = interest - fee;
 
         // Record timestamp for stream verification
         uint256 expectedStartTime = block.timestamp;
-        uint256 expectedEndTime = block.timestamp + cfg.holdingDays * 1 days;
+        uint256 expectedEndTime = block.timestamp + cfg.holdingPeriod;
 
         // Execute processInflows
         vm.prank(keeperBot);
@@ -384,7 +359,6 @@ contract StrategyKeeperMainnetTest is Test {
                 vault: VAULT,
                 targetStrategy: TARGET_STRATEGY,
                 safe: address(safe),
-                companion: address(companion),
                 baseAsset: USDC,
                 borrower: BORROWER,
                 feeWallet: FEE_WALLET,
@@ -393,7 +367,7 @@ contract StrategyKeeperMainnetTest is Test {
                 minThreshold: type(uint256).max, // Skip vault allocation
                 minResidual: 100_000e6, // Set minResidual equal to safe balance
                 apr: 0.121e18,
-                holdingDays: 28,
+                holdingPeriod: 28 days,
                 minProcessingPercent: 0.01e18,
                 feeFraction: 11
             })
@@ -416,7 +390,6 @@ contract StrategyKeeperMainnetTest is Test {
                 vault: VAULT,
                 targetStrategy: TARGET_STRATEGY,
                 safe: address(safe),
-                companion: address(companion),
                 baseAsset: USDC,
                 borrower: BORROWER,
                 feeWallet: FEE_WALLET,
@@ -425,7 +398,7 @@ contract StrategyKeeperMainnetTest is Test {
                 minThreshold: type(uint256).max, // Skip vault threshold condition
                 minResidual: 100_000e6, // Equal to safe balance
                 apr: 0.121e18,
-                holdingDays: 28,
+                holdingPeriod: 28 days,
                 minProcessingPercent: 0.5e18, // 50% - vault balance (77K) < 50% of totalAssets (~1.77M) = ~885K
                 feeFraction: 11
             })
@@ -455,7 +428,6 @@ contract StrategyKeeperMainnetTest is Test {
                 vault: VAULT,
                 targetStrategy: TARGET_STRATEGY,
                 safe: address(safe),
-                companion: address(companion),
                 baseAsset: USDC,
                 borrower: BORROWER,
                 feeWallet: FEE_WALLET,
@@ -464,7 +436,7 @@ contract StrategyKeeperMainnetTest is Test {
                 minThreshold: type(uint256).max,
                 minResidual: 1_000e6,
                 apr: 0.121e18,
-                holdingDays: 28,
+                holdingPeriod: 28 days,
                 minProcessingPercent: 0.01e18, // 1%
                 feeFraction: 11
             })
@@ -504,7 +476,6 @@ contract StrategyKeeperMainnetTest is Test {
                 vault: VAULT,
                 targetStrategy: TARGET_STRATEGY,
                 safe: address(safe),
-                companion: address(companion),
                 baseAsset: USDC,
                 borrower: BORROWER,
                 feeWallet: FEE_WALLET,
@@ -513,7 +484,7 @@ contract StrategyKeeperMainnetTest is Test {
                 minThreshold: type(uint256).max,
                 minResidual: 99_999e6, // Only 1e6 available
                 apr: 0.121e18,
-                holdingDays: 28,
+                holdingPeriod: 28 days,
                 minProcessingPercent: 0.5e18, // 50% - way higher than available
                 feeFraction: 11
             })
@@ -538,7 +509,6 @@ contract StrategyKeeperMainnetTest is Test {
                 vault: VAULT,
                 targetStrategy: TARGET_STRATEGY,
                 safe: address(safe),
-                companion: address(companion),
                 baseAsset: USDC,
                 borrower: BORROWER,
                 feeWallet: FEE_WALLET,
@@ -547,7 +517,7 @@ contract StrategyKeeperMainnetTest is Test {
                 minThreshold: type(uint256).max,
                 minResidual: 1_000e6,
                 apr: 0.121e18,
-                holdingDays: 28,
+                holdingPeriod: 28 days,
                 minProcessingPercent: 0.01e18,
                 feeFraction: 11
             })
