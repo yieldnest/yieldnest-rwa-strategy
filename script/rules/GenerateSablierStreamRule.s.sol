@@ -9,13 +9,14 @@ import {MainnetKeeperContracts} from "@script/Contracts.sol";
 import {Prompt} from "@script/utils/Prompt.sol";
 
 /// @title GenerateSablierStreamRule
-/// @notice Script to generate and set the Sablier createWithTimestampsLL rule on a vault
+/// @notice Script to generate the Sablier approve + createWithTimestampsLL rules on a vault
 /// @dev Run with: forge script script/rules/GenerateSablierStreamRule.s.sol
 contract GenerateSablierStreamRule is Script {
     function run() public {
-        console.log("=== Generate Sablier Stream Creation Rule ===");
+        console.log("=== Generate Sablier Stream Creation Rules ===");
         console.log("");
         console.log("Using Sablier LockupLinear:", MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR);
+        console.log("Using USDC:", MainnetKeeperContracts.USDC);
         console.log("");
 
         address vault = Prompt.forAddress("Enter vault address");
@@ -24,29 +25,46 @@ contract GenerateSablierStreamRule is Script {
         console.log("");
         console.log("Configuration:");
         console.log("  Vault:", vault);
+        console.log("  USDC:", MainnetKeeperContracts.USDC);
         console.log("  Sablier Contract:", MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR);
         console.log("  Validator:", validatorAddress);
 
-        SablierRules.RuleParams memory ruleParams = SablierRules.getCreateStreamRuleWithValidator(
+        // Rule 1: Approve USDC to Sablier
+        SablierRules.RuleParams memory approveRuleParams =
+            SablierRules.getApproveRule(MainnetKeeperContracts.USDC, MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR);
+
+        console.log("");
+        console.log("Generated Approve Rule:");
+        console.log("  Contract Address:", approveRuleParams.contractAddress);
+        console.log("  Function Selector:", vm.toString(approveRuleParams.funcSig));
+        console.log("  Is Active:", approveRuleParams.rule.isActive);
+        console.log("  Param Rules Count:", approveRuleParams.rule.paramRules.length);
+
+        // Rule 2: Create stream with validator
+        SablierRules.RuleParams memory createStreamRuleParams = SablierRules.getCreateStreamRuleWithValidator(
             MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, IValidator(validatorAddress)
         );
 
         console.log("");
-        console.log("Generated Rule:");
-        console.log("  Contract Address:", ruleParams.contractAddress);
-        console.log("  Function Selector:", vm.toString(ruleParams.funcSig));
-        console.log("  Is Active:", ruleParams.rule.isActive);
-        console.log("  Validator:", address(ruleParams.rule.validator));
-        console.log("  Param Rules Count:", ruleParams.rule.paramRules.length);
+        console.log("Generated Create Stream Rule:");
+        console.log("  Contract Address:", createStreamRuleParams.contractAddress);
+        console.log("  Function Selector:", vm.toString(createStreamRuleParams.funcSig));
+        console.log("  Is Active:", createStreamRuleParams.rule.isActive);
+        console.log("  Validator:", address(createStreamRuleParams.rule.validator));
+        console.log("  Param Rules Count:", createStreamRuleParams.rule.paramRules.length);
 
-        // Build arrays for setProcessorRules
-        address[] memory targets = new address[](1);
-        bytes4[] memory funcSigs = new bytes4[](1);
-        IVault.FunctionRule[] memory rules = new IVault.FunctionRule[](1);
+        // Build arrays for setProcessorRules (2 rules)
+        address[] memory targets = new address[](2);
+        bytes4[] memory funcSigs = new bytes4[](2);
+        IVault.FunctionRule[] memory rules = new IVault.FunctionRule[](2);
 
-        targets[0] = ruleParams.contractAddress;
-        funcSigs[0] = ruleParams.funcSig;
-        rules[0] = ruleParams.rule;
+        targets[0] = approveRuleParams.contractAddress;
+        funcSigs[0] = approveRuleParams.funcSig;
+        rules[0] = approveRuleParams.rule;
+
+        targets[1] = createStreamRuleParams.contractAddress;
+        funcSigs[1] = createStreamRuleParams.funcSig;
+        rules[1] = createStreamRuleParams.rule;
 
         // Generate calldata for setProcessorRules
         bytes memory callData = abi.encodeCall(IVault.setProcessorRules, (targets, funcSigs, rules));
