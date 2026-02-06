@@ -30,6 +30,7 @@ library MainnetKeeperContracts {
     /// @notice Borrower address - receives principal from keeper disbursements
     address public constant BORROWER = 0xaa7f79Bb105833D655D1C13C175142c44e209912;
 
+    address public constant SABLIER_VALIDATOR = 0xad1b00Ab22a2Bb489814605Cd9fcd9f61a5fcAA7;
     // ═══════════════════════════════════════════════════════════════════════════
     // EXTERNAL PROTOCOLS
     // ═══════════════════════════════════════════════════════════════════════════
