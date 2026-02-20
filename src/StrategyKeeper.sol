@@ -49,6 +49,10 @@ interface IStrategyKeeper {
         uint256 vaultAllocation,
         uint256 safeBalance,
         uint256 minResidual,
+        uint256 available,
+        uint256 interest,
+        uint256 apr,
+        uint256 holdingPeriod,
         uint256 principal,
         uint256 fee,
         uint256 streamAmount
@@ -217,7 +221,17 @@ contract StrategyKeeper is
         _getKeeperStorage().lastProcessedTimestamp = block.timestamp;
 
         emit KeeperExecuted(
-            block.timestamp, vaultAllocation, safeBalance, cfg.minResidual, principal, fee, streamAmount
+            block.timestamp,
+            vaultAllocation,
+            safeBalance,
+            cfg.minResidual,
+            available,
+            interest,
+            cfg.apr,
+            cfg.holdingPeriod,
+            principal,
+            fee,
+            streamAmount
         );
     }
 

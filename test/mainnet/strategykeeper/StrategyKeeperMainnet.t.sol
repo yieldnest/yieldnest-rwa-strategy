@@ -513,7 +513,17 @@ contract StrategyKeeperMainnetTest is Test {
 
         vm.expectEmit(true, false, false, true);
         emit IStrategyKeeper.KeeperExecuted(
-            block.timestamp, 0, safeBalance, cfg.minResidual, principal, fee, streamAmount
+            block.timestamp,
+            0,
+            safeBalance,
+            cfg.minResidual,
+            available,
+            interest,
+            cfg.apr,
+            cfg.holdingPeriod,
+            principal,
+            fee,
+            streamAmount
         );
 
         vm.prank(powerKeeperBot);
