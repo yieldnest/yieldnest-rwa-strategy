@@ -72,8 +72,11 @@ contract StrategyKeeper is
 {
     using SafeERC20 for IERC20;
 
-    /// @notice Role required to call the keeper function
+    /// @notice Role required to call the keeper function (on-chain computed parameters)
     bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
+
+    /// @notice Role required to call the keeper function with manual parameters
+    bytes32 public constant POWER_KEEPER_ROLE = keccak256("POWER_KEEPER_ROLE");
 
     /// @notice Role required to update configuration
     bytes32 public constant CONFIG_MANAGER_ROLE = keccak256("CONFIG_MANAGER_ROLE");
@@ -132,8 +135,8 @@ contract StrategyKeeper is
         _setConfig(config_);
     }
 
-    /// @notice Execute the keeper logic to process inflows
-    /// @dev Requires KEEPER_ROLE. All-or-nothing execution.
+    /// @notice Execute the keeper logic to process inflows (on-chain computed parameters)
+    /// @dev Requires KEEPER_ROLE. Computes vaultAllocation and available from on-chain state.
     function processInflows() external onlyRole(KEEPER_ROLE) nonReentrant whenNotPaused {
         KeeperStorage storage s = _getKeeperStorage();
         KeeperConfig memory cfg = s.config;
@@ -152,16 +155,55 @@ contract StrategyKeeper is
         if (safeBalance <= cfg.minResidual) revert NoFundsToProcess();
         uint256 available = safeBalance - cfg.minResidual;
 
-        // 4. Calculate yield holdback
+        _executeInflows(cfg, vaultAllocation, available, safeBalance);
+    }
+
+    /// @notice Execute the keeper logic to process inflows with manual parameters
+    /// @dev Requires POWER_KEEPER_ROLE. Caller provides vaultAllocation and available amounts.
+    /// @param vaultAllocation Amount to allocate from vault (0 to skip allocation)
+    /// @param available Amount of safe funds to disburse (must leave minResidual in safe)
+    function processInflows(uint256 vaultAllocation, uint256 available)
+        external
+        onlyRole(POWER_KEEPER_ROLE)
+        nonReentrant
+        whenNotPaused
+    {
+        if (available == 0) revert NoFundsToProcess();
+
+        KeeperConfig memory cfg = _getKeeperStorage().config;
+
+        // Allocate vault funds if needed
+        if (vaultAllocation > 0) {
+            _allocateToStrategy(cfg, vaultAllocation);
+        }
+
+        // Validate safe has enough funds to cover available + minResidual
+        uint256 safeBalance = IERC20(cfg.baseAsset).balanceOf(cfg.safe);
+        if (safeBalance < available + cfg.minResidual) {
+            revert InsufficientSafeBalance(safeBalance, available + cfg.minResidual);
+        }
+
+        _executeInflows(cfg, vaultAllocation, available, safeBalance);
+    }
+
+    /// @notice Common inflow execution logic shared by both processInflows variants
+    /// @param cfg Keeper configuration
+    /// @param vaultAllocation Amount allocated from vault (for event)
+    /// @param available Amount of safe funds to disburse
+    /// @param safeBalance Safe balance after allocation (for event)
+    function _executeInflows(KeeperConfig memory cfg, uint256 vaultAllocation, uint256 available, uint256 safeBalance)
+        internal
+    {
+        // Calculate yield holdback
         // interest = available * apr * holdingPeriod / SECONDS_PER_YEAR / PRECISION
         uint256 interest = (available * cfg.apr * cfg.holdingPeriod) / SECONDS_PER_YEAR / PRECISION;
         uint256 principal = available - interest;
 
-        // 5. Calculate fee split: 1/feeFraction to fee wallet, (feeFraction-1)/feeFraction to stream
+        // Calculate fee split: 1/feeFraction to fee wallet, (feeFraction-1)/feeFraction to stream
         uint256 fee = interest / cfg.feeFraction;
         uint256 streamAmount = interest - fee;
 
-        // 5. Execute Safe transactions
+        // Execute Safe transactions
         // Transfer principal to borrower
         _executeSafeTransfer(cfg, cfg.borrower, principal);
 
@@ -172,7 +214,7 @@ contract StrategyKeeper is
         _createSablierStream(cfg, streamAmount);
 
         // Record last processed timestamp
-        s.lastProcessedTimestamp = block.timestamp;
+        _getKeeperStorage().lastProcessedTimestamp = block.timestamp;
 
         emit KeeperExecuted(
             block.timestamp, vaultAllocation, safeBalance, cfg.minResidual, principal, fee, streamAmount
