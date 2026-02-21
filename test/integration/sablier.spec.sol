@@ -368,8 +368,7 @@ contract SablierIntegrationTest is Test {
         data[0] = abi.encodeCall(IERC20.approve, (address(batchLockup), totalAmount));
 
         // Call 2: Batch create 3 streams
-        ISablierBatchLockup.CreateWithTimestampsLL[] memory batch =
-            new ISablierBatchLockup.CreateWithTimestampsLL[](3);
+        ISablierBatchLockup.CreateWithTimestampsLL[] memory batch = new ISablierBatchLockup.CreateWithTimestampsLL[](3);
 
         batch[0] = ISablierBatchLockup.CreateWithTimestampsLL({
             sender: safe,
@@ -419,8 +418,7 @@ contract SablierIntegrationTest is Test {
         targets[1] = address(batchLockup);
         values[1] = 0;
         data[1] = abi.encodeCall(
-            ISablierBatchLockup.createWithTimestampsLL,
-            (MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, usdc, batch)
+            ISablierBatchLockup.createWithTimestampsLL, (MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, usdc, batch)
         );
 
         uint256 balanceBefore = usdc.balanceOf(address(strategy));
@@ -751,8 +749,7 @@ contract SablierIntegrationTest is Test {
         targets[1] = address(batchLockup);
         values[1] = 0;
         data[1] = abi.encodeCall(
-            ISablierBatchLockup.createWithTimestampsLL,
-            (MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, usdc, batch)
+            ISablierBatchLockup.createWithTimestampsLL, (MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, usdc, batch)
         );
 
         vm.prank(processor);
@@ -779,8 +776,7 @@ contract SablierIntegrationTest is Test {
         targets[1] = address(batchLockup);
         values[1] = 0;
         data[1] = abi.encodeCall(
-            ISablierBatchLockup.createWithTimestampsLL,
-            (MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, usdc, batch)
+            ISablierBatchLockup.createWithTimestampsLL, (MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, usdc, batch)
         );
 
         vm.prank(processor);
@@ -807,8 +803,7 @@ contract SablierIntegrationTest is Test {
         targets[1] = address(batchLockup);
         values[1] = 0;
         data[1] = abi.encodeCall(
-            ISablierBatchLockup.createWithTimestampsLL,
-            (MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, usdc, batch)
+            ISablierBatchLockup.createWithTimestampsLL, (MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, usdc, batch)
         );
 
         vm.prank(processor);
@@ -833,8 +828,7 @@ contract SablierIntegrationTest is Test {
         targets[1] = address(batchLockup);
         values[1] = 0;
         data[1] = abi.encodeCall(
-            ISablierBatchLockup.createWithTimestampsLL,
-            (MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, usdc, batch)
+            ISablierBatchLockup.createWithTimestampsLL, (MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, usdc, batch)
         );
 
         vm.prank(processor);
@@ -862,9 +856,7 @@ contract SablierIntegrationTest is Test {
 
         vm.prank(processor);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                StrategyKeeperSablierValidator.InvalidToken.selector, address(0xBEEF), address(usdc)
-            )
+            abi.encodeWithSelector(StrategyKeeperSablierValidator.InvalidToken.selector, address(0xBEEF), address(usdc))
         );
         strategy.processor(targets, values, data);
     }
@@ -928,11 +920,7 @@ contract StrategyKeeperSablierValidatorIntegrationTest is Test {
 
     function test_validatorDeployment() public view {
         assertEq(validator.safe(), safe, "Safe should be set correctly");
-        assertEq(
-            validator.lockup(),
-            MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR,
-            "Lockup should be set correctly"
-        );
+        assertEq(validator.lockup(), MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, "Lockup should be set correctly");
         assertEq(validator.token(), address(usdc), "Token should be set correctly");
         assertTrue(
             validator.isAllowedRecipient(MainnetKeeperContracts.REWARDS_SWEEPER), "Rewards sweeper should be allowed"
@@ -960,9 +948,7 @@ contract StrategyKeeperSablierValidatorIntegrationTest is Test {
         address[] memory recipients = new address[](1);
         recipients[0] = MainnetKeeperContracts.REWARDS_SWEEPER;
         vm.expectRevert(StrategyKeeperSablierValidator.ZeroAddress.selector);
-        new StrategyKeeperSablierValidator(
-            safe, MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, address(0), recipients
-        );
+        new StrategyKeeperSablierValidator(safe, MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, address(0), recipients);
     }
 
     function test_revert_validatorDeployment_emptyRecipients() public {
@@ -997,8 +983,7 @@ contract StrategyKeeperSablierValidatorIntegrationTest is Test {
     }
 
     function test_validateValidBatchCalldata() public view {
-        ISablierBatchLockup.CreateWithTimestampsLL[] memory batch =
-            new ISablierBatchLockup.CreateWithTimestampsLL[](1);
+        ISablierBatchLockup.CreateWithTimestampsLL[] memory batch = new ISablierBatchLockup.CreateWithTimestampsLL[](1);
 
         batch[0] = ISablierBatchLockup.CreateWithTimestampsLL({
             sender: safe,
@@ -1016,8 +1001,7 @@ contract StrategyKeeperSablierValidatorIntegrationTest is Test {
         });
 
         bytes memory callData = abi.encodeCall(
-            ISablierBatchLockup.createWithTimestampsLL,
-            (MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, usdc, batch)
+            ISablierBatchLockup.createWithTimestampsLL, (MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, usdc, batch)
         );
 
         // Should not revert
@@ -1025,8 +1009,7 @@ contract StrategyKeeperSablierValidatorIntegrationTest is Test {
     }
 
     function test_validateBatchMultipleItems() public view {
-        ISablierBatchLockup.CreateWithTimestampsLL[] memory batch =
-            new ISablierBatchLockup.CreateWithTimestampsLL[](3);
+        ISablierBatchLockup.CreateWithTimestampsLL[] memory batch = new ISablierBatchLockup.CreateWithTimestampsLL[](3);
 
         for (uint256 i = 0; i < 3; i++) {
             batch[i] = ISablierBatchLockup.CreateWithTimestampsLL({
@@ -1046,8 +1029,7 @@ contract StrategyKeeperSablierValidatorIntegrationTest is Test {
         }
 
         bytes memory callData = abi.encodeCall(
-            ISablierBatchLockup.createWithTimestampsLL,
-            (MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, usdc, batch)
+            ISablierBatchLockup.createWithTimestampsLL, (MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, usdc, batch)
         );
 
         // Should not revert
@@ -1064,8 +1046,7 @@ contract StrategyKeeperSablierValidatorIntegrationTest is Test {
     }
 
     function test_revert_batchInvalidSenderInOneItem() public {
-        ISablierBatchLockup.CreateWithTimestampsLL[] memory batch =
-            new ISablierBatchLockup.CreateWithTimestampsLL[](2);
+        ISablierBatchLockup.CreateWithTimestampsLL[] memory batch = new ISablierBatchLockup.CreateWithTimestampsLL[](2);
 
         batch[0] = ISablierBatchLockup.CreateWithTimestampsLL({
             sender: safe, // Valid
@@ -1098,8 +1079,7 @@ contract StrategyKeeperSablierValidatorIntegrationTest is Test {
         });
 
         bytes memory callData = abi.encodeCall(
-            ISablierBatchLockup.createWithTimestampsLL,
-            (MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, usdc, batch)
+            ISablierBatchLockup.createWithTimestampsLL, (MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, usdc, batch)
         );
 
         vm.expectRevert(
@@ -1109,12 +1089,10 @@ contract StrategyKeeperSablierValidatorIntegrationTest is Test {
     }
 
     function test_revert_batchEmptyBatch() public {
-        ISablierBatchLockup.CreateWithTimestampsLL[] memory batch =
-            new ISablierBatchLockup.CreateWithTimestampsLL[](0);
+        ISablierBatchLockup.CreateWithTimestampsLL[] memory batch = new ISablierBatchLockup.CreateWithTimestampsLL[](0);
 
         bytes memory callData = abi.encodeCall(
-            ISablierBatchLockup.createWithTimestampsLL,
-            (MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, usdc, batch)
+            ISablierBatchLockup.createWithTimestampsLL, (MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, usdc, batch)
         );
 
         vm.expectRevert(StrategyKeeperSablierValidator.EmptyBatch.selector);
@@ -1122,8 +1100,7 @@ contract StrategyKeeperSablierValidatorIntegrationTest is Test {
     }
 
     function test_revert_batchInvalidLockup() public {
-        ISablierBatchLockup.CreateWithTimestampsLL[] memory batch =
-            new ISablierBatchLockup.CreateWithTimestampsLL[](1);
+        ISablierBatchLockup.CreateWithTimestampsLL[] memory batch = new ISablierBatchLockup.CreateWithTimestampsLL[](1);
 
         batch[0] = ISablierBatchLockup.CreateWithTimestampsLL({
             sender: safe,

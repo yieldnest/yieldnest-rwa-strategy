@@ -83,11 +83,10 @@ contract GenerateSablierStreamRule is Script {
         console.logBytes(callData);
     }
 
-    function _logIndividualCalldata(
-        address vault,
-        string memory label,
-        SablierRules.RuleParams memory ruleParams
-    ) internal pure {
+    function _logIndividualCalldata(address vault, string memory label, SablierRules.RuleParams memory ruleParams)
+        internal
+        pure
+    {
         address[] memory targets = new address[](1);
         bytes4[] memory funcSigs = new bytes4[](1);
         IVault.FunctionRule[] memory rules = new IVault.FunctionRule[](1);

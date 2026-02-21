@@ -557,8 +557,7 @@ contract StrategyKeeperFlexSafeTest is Test {
 
     function test_batchLockupExists() public view {
         assertTrue(
-            MainnetKeeperContracts.SABLIER_BATCH_LOCKUP.code.length > 0,
-            "Batch lockup should be a deployed contract"
+            MainnetKeeperContracts.SABLIER_BATCH_LOCKUP.code.length > 0, "Batch lockup should be a deployed contract"
         );
     }
 
@@ -573,6 +572,9 @@ contract StrategyKeeperFlexSafeTest is Test {
         uint256 sablierBalanceBefore =
             IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR);
 
+        // Execute module calls as the keeper (which is an enabled module on the real Safe)
+        vm.startPrank(address(keeper));
+
         // Step 1: Approve BatchLockup to spend USDC from the real Safe (via keeper module)
         bytes memory approveData =
             abi.encodeCall(IERC20.approve, (MainnetKeeperContracts.SABLIER_BATCH_LOCKUP, totalAmount));
@@ -582,8 +584,7 @@ contract StrategyKeeperFlexSafeTest is Test {
         assertTrue(success, "Approve should succeed");
 
         // Step 2: Build batch params
-        ISablierBatchLockup.CreateWithTimestampsLL[] memory batch =
-            new ISablierBatchLockup.CreateWithTimestampsLL[](2);
+        ISablierBatchLockup.CreateWithTimestampsLL[] memory batch = new ISablierBatchLockup.CreateWithTimestampsLL[](2);
 
         batch[0] = ISablierBatchLockup.CreateWithTimestampsLL({
             sender: realSafe,
@@ -625,15 +626,15 @@ contract StrategyKeeperFlexSafeTest is Test {
         );
         assertTrue(success, "Batch create should succeed");
 
+        vm.stopPrank();
+
         // Verify 2 streams were created
         assertEq(sablier.nextStreamId(), nextStreamIdBefore + 2, "2 streams should be created");
 
         // Verify stream details
         assertEq(sablier.getSender(nextStreamIdBefore), realSafe, "Stream 1 sender should be real safe");
         assertEq(sablier.getRecipient(nextStreamIdBefore), streamReceiver, "Stream 1 recipient should match");
-        assertEq(
-            sablier.getDepositedAmount(nextStreamIdBefore), uint128(streamAmount1), "Stream 1 amount should match"
-        );
+        assertEq(sablier.getDepositedAmount(nextStreamIdBefore), uint128(streamAmount1), "Stream 1 amount should match");
         assertTrue(sablier.isCancelable(nextStreamIdBefore), "Stream 1 should be cancelable");
         assertTrue(sablier.isTransferable(nextStreamIdBefore), "Stream 1 should be transferable");
 

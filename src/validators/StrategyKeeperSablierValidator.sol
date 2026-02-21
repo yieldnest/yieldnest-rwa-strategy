@@ -145,7 +145,9 @@ contract StrategyKeeperSablierValidator is IValidator {
         (ISablierLockupLinear.CreateWithTimestamps memory createParams,,) =
             abi.decode(params, (ISablierLockupLinear.CreateWithTimestamps, ISablierLockupLinear.UnlockAmounts, uint40));
 
-        _validateStreamParams(createParams.sender, createParams.recipient, createParams.cancelable, createParams.transferable);
+        _validateStreamParams(
+            createParams.sender, createParams.recipient, createParams.cancelable, createParams.transferable
+        );
 
         // Validate token is the configured token
         if (address(createParams.token) != token) {
@@ -183,7 +185,10 @@ contract StrategyKeeperSablierValidator is IValidator {
     /// @param recipient The stream recipient (must be in allowed list)
     /// @param cancelable Whether the stream is cancelable (must be true)
     /// @param transferable Whether the stream is transferable (must be true)
-    function _validateStreamParams(address sender, address recipient, bool cancelable, bool transferable) internal view {
+    function _validateStreamParams(address sender, address recipient, bool cancelable, bool transferable)
+        internal
+        view
+    {
         if (sender != safe) {
             revert InvalidSender(sender, safe);
         }

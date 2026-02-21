@@ -100,14 +100,17 @@ library SablierRules {
     /// @param tokenContract The address of the ERC20 token contract
     /// @param spenders The addresses allowed to spend
     /// @return RuleParams for approve function
-    function getApproveRule(address tokenContract, address[] memory spenders) internal pure returns (RuleParams memory) {
+    function getApproveRule(address tokenContract, address[] memory spenders)
+        internal
+        pure
+        returns (RuleParams memory)
+    {
         bytes4 funcSig = IERC20.approve.selector;
 
         IVault.ParamRule[] memory paramRules = new IVault.ParamRule[](2);
 
         // First param: spender address - must be in allowlist
-        paramRules[0] =
-            IVault.ParamRule({paramType: IVault.ParamType.ADDRESS, isArray: false, allowList: spenders});
+        paramRules[0] = IVault.ParamRule({paramType: IVault.ParamType.ADDRESS, isArray: false, allowList: spenders});
 
         // Second param: amount - any uint256 is allowed
         paramRules[1] =
