@@ -50,6 +50,7 @@ contract StrategyKeeperMainnetTest is Test {
     // Test accounts
     address public admin;
     address public keeperBot;
+    address public powerKeeperBot;
     address public streamReceiver;
 
     // EOA owner for the Safe
@@ -64,6 +65,7 @@ contract StrategyKeeperMainnetTest is Test {
     function setUp() public {
         admin = makeAddr("admin");
         keeperBot = makeAddr("keeperBot");
+        powerKeeperBot = makeAddr("powerKeeperBot");
         streamReceiver = makeAddr("streamReceiver");
         eoaOwner = vm.addr(eoaOwnerPk);
 
@@ -121,6 +123,7 @@ contract StrategyKeeperMainnetTest is Test {
             })
         );
         keeper.grantRole(keeper.KEEPER_ROLE(), keeperBot);
+        keeper.grantRole(keeper.POWER_KEEPER_ROLE(), powerKeeperBot);
         vm.stopPrank();
 
         // Fund safe with USDC from whale
@@ -206,6 +209,9 @@ contract StrategyKeeperMainnetTest is Test {
         assertTrue(keeper.hasRole(keeper.DEFAULT_ADMIN_ROLE(), admin), "admin should have DEFAULT_ADMIN_ROLE");
         assertTrue(keeper.hasRole(keeper.CONFIG_MANAGER_ROLE(), admin), "admin should have CONFIG_MANAGER_ROLE");
         assertTrue(keeper.hasRole(keeper.KEEPER_ROLE(), keeperBot), "keeperBot should have KEEPER_ROLE");
+        assertTrue(
+            keeper.hasRole(keeper.POWER_KEEPER_ROLE(), powerKeeperBot), "powerKeeperBot should have POWER_KEEPER_ROLE"
+        );
         assertTrue(keeper.hasRole(keeper.PAUSER_ROLE(), admin), "admin should have PAUSER_ROLE");
     }
 
@@ -249,6 +255,12 @@ contract StrategyKeeperMainnetTest is Test {
         vm.prank(address(0xDEAD));
         vm.expectRevert();
         keeper.processInflows();
+    }
+
+    function test_revertOnUnauthorizedPowerKeeper() public {
+        vm.prank(address(0xDEAD));
+        vm.expectRevert();
+        keeper.processInflows(0, 50_000e6);
     }
 
     function test_revertOnUnauthorizedConfigUpdate() public {
@@ -350,6 +362,221 @@ contract StrategyKeeperMainnetTest is Test {
         assertTrue(sablier.isCancelable(expectedStreamId), "Stream should be cancelable");
         assertTrue(sablier.isTransferable(expectedStreamId), "Stream should be transferable");
     }
+
+    // ======== POWER_KEEPER_ROLE processInflows(uint256, uint256) tests ========
+
+    function test_processInflowsManual_success() public {
+        // Get initial balances
+        uint256 safeBalanceBefore = IERC20(USDC).balanceOf(address(safe));
+        uint256 borrowerBalanceBefore = IERC20(USDC).balanceOf(BORROWER);
+        uint256 feeWalletBalanceBefore = IERC20(USDC).balanceOf(FEE_WALLET);
+        uint256 sablierBalanceBefore = IERC20(USDC).balanceOf(SABLIER);
+
+        // Get expected stream ID before execution
+        ISablierLockup sablier = ISablierLockup(SABLIER);
+        uint256 expectedStreamId = sablier.nextStreamId();
+
+        // Use same available as the auto version would compute
+        IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
+        uint256 available = safeBalanceBefore - cfg.minResidual;
+        uint256 interest = (available * cfg.apr * cfg.holdingPeriod) / 365 days / 1e18;
+        uint256 principal = available - interest;
+        uint256 fee = interest / cfg.feeFraction;
+        uint256 streamAmount = interest - fee;
+
+        // Record timestamp for stream verification
+        uint256 expectedStartTime = block.timestamp;
+        uint256 expectedEndTime = block.timestamp + cfg.holdingPeriod;
+
+        // Execute processInflows with manual params (no vault allocation, full available)
+        vm.prank(powerKeeperBot);
+        keeper.processInflows(0, available);
+
+        // Assert borrower received principal
+        assertEq(
+            IERC20(USDC).balanceOf(BORROWER), borrowerBalanceBefore + principal, "Borrower should receive principal"
+        );
+
+        // Assert fee wallet received fee
+        assertEq(IERC20(USDC).balanceOf(FEE_WALLET), feeWalletBalanceBefore + fee, "Fee wallet should receive fee");
+
+        // Assert safe balance decreased correctly
+        assertEq(IERC20(USDC).balanceOf(address(safe)), cfg.minResidual, "Safe should only have minResidual left");
+
+        // Assert stream was created
+        assertEq(
+            IERC20(USDC).balanceOf(SABLIER), sablierBalanceBefore + streamAmount, "Sablier should hold stream amount"
+        );
+
+        // Assert stream fields are correct
+        assertEq(sablier.nextStreamId(), expectedStreamId + 1, "Stream ID should increment");
+        assertEq(sablier.getSender(expectedStreamId), address(safe), "Stream sender should be safe");
+        assertEq(sablier.getRecipient(expectedStreamId), streamReceiver, "Stream recipient should be streamReceiver");
+        assertEq(sablier.ownerOf(expectedStreamId), streamReceiver, "Stream NFT owner should be streamReceiver");
+        assertEq(sablier.getDepositedAmount(expectedStreamId), uint128(streamAmount), "Stream deposit should match");
+        assertEq(sablier.getStartTime(expectedStreamId), uint40(expectedStartTime), "Stream start time should match");
+        assertEq(sablier.getEndTime(expectedStreamId), uint40(expectedEndTime), "Stream end time should match");
+        assertTrue(sablier.isCancelable(expectedStreamId), "Stream should be cancelable");
+        assertTrue(sablier.isTransferable(expectedStreamId), "Stream should be transferable");
+    }
+
+    function test_processInflowsManual_partialAvailable() public {
+        // Power keeper can choose to disburse less than the full available amount
+        uint256 safeBalanceBefore = IERC20(USDC).balanceOf(address(safe));
+        uint256 borrowerBalanceBefore = IERC20(USDC).balanceOf(BORROWER);
+        uint256 feeWalletBalanceBefore = IERC20(USDC).balanceOf(FEE_WALLET);
+        uint256 sablierBalanceBefore = IERC20(USDC).balanceOf(SABLIER);
+
+        IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
+
+        // Use only half of the available amount
+        uint256 fullAvailable = safeBalanceBefore - cfg.minResidual;
+        uint256 partialAvailable = fullAvailable / 2;
+
+        uint256 interest = (partialAvailable * cfg.apr * cfg.holdingPeriod) / 365 days / 1e18;
+        uint256 principal = partialAvailable - interest;
+        uint256 fee = interest / cfg.feeFraction;
+        uint256 streamAmount = interest - fee;
+
+        vm.prank(powerKeeperBot);
+        keeper.processInflows(0, partialAvailable);
+
+        // Assert borrower received principal for partial amount
+        assertEq(
+            IERC20(USDC).balanceOf(BORROWER), borrowerBalanceBefore + principal, "Borrower should receive principal"
+        );
+
+        // Assert fee wallet received fee
+        assertEq(IERC20(USDC).balanceOf(FEE_WALLET), feeWalletBalanceBefore + fee, "Fee wallet should receive fee");
+
+        // Assert safe retained more than minResidual (since we only used half)
+        uint256 expectedSafeBalance = safeBalanceBefore - partialAvailable;
+        assertEq(IERC20(USDC).balanceOf(address(safe)), expectedSafeBalance, "Safe should retain extra funds");
+        assertTrue(expectedSafeBalance > cfg.minResidual, "Safe should have more than minResidual");
+
+        // Assert stream was created
+        assertEq(
+            IERC20(USDC).balanceOf(SABLIER), sablierBalanceBefore + streamAmount, "Sablier should hold stream amount"
+        );
+    }
+
+    function test_processInflowsManual_matchesAutoVersion() public {
+        // Both versions should produce identical results when given the same parameters
+        IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
+        uint256 safeBalance = IERC20(USDC).balanceOf(address(safe));
+        uint256 available = safeBalance - cfg.minResidual;
+
+        // Calculate expected amounts
+        uint256 interest = (available * cfg.apr * cfg.holdingPeriod) / 365 days / 1e18;
+        uint256 principal = available - interest;
+        uint256 fee = interest / cfg.feeFraction;
+        uint256 streamAmount = interest - fee;
+
+        // Record balances before
+        uint256 borrowerBefore = IERC20(USDC).balanceOf(BORROWER);
+        uint256 feeBefore = IERC20(USDC).balanceOf(FEE_WALLET);
+        uint256 sablierBefore = IERC20(USDC).balanceOf(SABLIER);
+
+        // Execute via power keeper (no vault allocation, same available as auto would compute)
+        vm.prank(powerKeeperBot);
+        keeper.processInflows(0, available);
+
+        // Verify results match expected (same as auto version would produce)
+        assertEq(IERC20(USDC).balanceOf(BORROWER), borrowerBefore + principal, "principal mismatch");
+        assertEq(IERC20(USDC).balanceOf(FEE_WALLET), feeBefore + fee, "fee mismatch");
+        assertEq(IERC20(USDC).balanceOf(SABLIER), sablierBefore + streamAmount, "stream mismatch");
+        assertEq(IERC20(USDC).balanceOf(address(safe)), cfg.minResidual, "safe balance mismatch");
+    }
+
+    function test_processInflowsManual_updatesTimestamp() public {
+        assertEq(keeper.lastProcessedTimestamp(), 0, "should start at 0");
+
+        IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
+        uint256 available = IERC20(USDC).balanceOf(address(safe)) - cfg.minResidual;
+
+        uint256 expectedTimestamp = block.timestamp;
+        vm.prank(powerKeeperBot);
+        keeper.processInflows(0, available);
+
+        assertEq(keeper.lastProcessedTimestamp(), expectedTimestamp, "timestamp should be updated");
+    }
+
+    function test_processInflowsManual_emitsEvent() public {
+        IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
+        uint256 safeBalance = IERC20(USDC).balanceOf(address(safe));
+        uint256 available = safeBalance - cfg.minResidual;
+
+        uint256 interest = (available * cfg.apr * cfg.holdingPeriod) / 365 days / 1e18;
+        uint256 principal = available - interest;
+        uint256 fee = interest / cfg.feeFraction;
+        uint256 streamAmount = interest - fee;
+
+        vm.expectEmit(true, false, false, true);
+        emit IStrategyKeeper.KeeperExecuted(
+            block.timestamp,
+            0,
+            safeBalance,
+            cfg.minResidual,
+            available,
+            interest,
+            cfg.apr,
+            cfg.holdingPeriod,
+            principal,
+            fee,
+            streamAmount
+        );
+
+        vm.prank(powerKeeperBot);
+        keeper.processInflows(0, available);
+    }
+
+    function test_processInflowsManual_revertOnZeroAvailable() public {
+        vm.prank(powerKeeperBot);
+        vm.expectRevert(IStrategyKeeper.NoFundsToProcess.selector);
+        keeper.processInflows(0, 0);
+    }
+
+    function test_processInflowsManual_revertOnInsufficientSafeBalance() public {
+        // Try to disburse more than safe has (minus minResidual)
+        uint256 safeBalance = IERC20(USDC).balanceOf(address(safe));
+        IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
+
+        // available that would leave less than minResidual
+        uint256 tooMuch = safeBalance; // Would need safeBalance + minResidual in safe
+
+        vm.prank(powerKeeperBot);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IStrategyKeeper.InsufficientSafeBalance.selector, safeBalance, tooMuch + cfg.minResidual
+            )
+        );
+        keeper.processInflows(0, tooMuch);
+    }
+
+    function test_processInflowsManual_revertOnKeeperRole() public {
+        // KEEPER_ROLE should not be able to call the manual version
+        vm.prank(keeperBot);
+        vm.expectRevert();
+        keeper.processInflows(0, 50_000e6);
+    }
+
+    function test_processInflows_revertOnPowerKeeperRole() public {
+        // POWER_KEEPER_ROLE should not be able to call the auto version
+        vm.prank(powerKeeperBot);
+        vm.expectRevert();
+        keeper.processInflows();
+    }
+
+    function test_processInflowsManual_revertWhenPaused() public {
+        vm.prank(admin);
+        keeper.pause();
+
+        vm.prank(powerKeeperBot);
+        vm.expectRevert();
+        keeper.processInflows(0, 50_000e6);
+    }
+
+    // ======== Original processInflows() tests ========
 
     function test_processInflows_noFundsToProcess() public {
         // Update config to set minThreshold very high so vault allocation is skipped

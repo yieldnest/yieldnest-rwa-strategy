@@ -12,6 +12,7 @@ contract StrategyKeeperTest is Test {
 
     address public admin = address(0x1);
     address public keeperBot = address(0x2);
+    address public powerKeeperBot = address(0xB);
     address public vault = address(0x3);
     address public targetStrategy = address(0x4);
     address public safe = address(0x5);
@@ -59,6 +60,7 @@ contract StrategyKeeperTest is Test {
         keeper.grantRole(keeper.DEFAULT_ADMIN_ROLE(), admin);
         keeper.grantRole(keeper.CONFIG_MANAGER_ROLE(), admin);
         keeper.grantRole(keeper.KEEPER_ROLE(), keeperBot);
+        keeper.grantRole(keeper.POWER_KEEPER_ROLE(), powerKeeperBot);
         keeper.grantRole(keeper.PAUSER_ROLE(), admin);
 
         // Renounce the test contract's roles
@@ -87,13 +89,44 @@ contract StrategyKeeperTest is Test {
         assertTrue(keeper.hasRole(keeper.DEFAULT_ADMIN_ROLE(), admin));
         assertTrue(keeper.hasRole(keeper.CONFIG_MANAGER_ROLE(), admin));
         assertTrue(keeper.hasRole(keeper.KEEPER_ROLE(), keeperBot));
+        assertTrue(keeper.hasRole(keeper.POWER_KEEPER_ROLE(), powerKeeperBot));
         assertTrue(keeper.hasRole(keeper.PAUSER_ROLE(), admin));
+    }
+
+    function test_powerKeeperRoleConstant() public view {
+        assertEq(keeper.POWER_KEEPER_ROLE(), keccak256("POWER_KEEPER_ROLE"));
     }
 
     function test_revertOnUnauthorizedKeeper() public {
         vm.prank(address(0xBEEF));
         vm.expectRevert();
         keeper.processInflows();
+    }
+
+    function test_revertOnUnauthorizedPowerKeeper() public {
+        vm.prank(address(0xBEEF));
+        vm.expectRevert();
+        keeper.processInflows(10_000e6, 50_000e6);
+    }
+
+    function test_revertOnKeeperCallingPowerKeeperFunction() public {
+        // KEEPER_ROLE should not be able to call processInflows(uint256, uint256)
+        vm.prank(keeperBot);
+        vm.expectRevert();
+        keeper.processInflows(10_000e6, 50_000e6);
+    }
+
+    function test_revertOnPowerKeeperCallingKeeperFunction() public {
+        // POWER_KEEPER_ROLE should not be able to call processInflows()
+        vm.prank(powerKeeperBot);
+        vm.expectRevert();
+        keeper.processInflows();
+    }
+
+    function test_revertOnPowerKeeperZeroAvailable() public {
+        vm.prank(powerKeeperBot);
+        vm.expectRevert(IStrategyKeeper.NoFundsToProcess.selector);
+        keeper.processInflows(0, 0);
     }
 
     function test_revertOnUnauthorizedConfigUpdate() public {
@@ -282,6 +315,17 @@ contract StrategyKeeperTest is Test {
         vm.prank(keeperBot);
         vm.expectRevert();
         keeper.processInflows();
+    }
+
+    function test_revertOnPowerKeeperProcessInflowsWhenPaused() public {
+        // Pause the keeper
+        vm.prank(admin);
+        keeper.pause();
+
+        // Try to process inflows with params - should revert
+        vm.prank(powerKeeperBot);
+        vm.expectRevert();
+        keeper.processInflows(10_000e6, 50_000e6);
     }
 
     function test_revertOnUnauthorizedPause() public {
