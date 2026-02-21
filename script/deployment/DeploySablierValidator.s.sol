@@ -20,6 +20,7 @@ contract DeploySablierValidator is Script {
         IAccountingModule accountingModule = flexStrategy.accountingModule();
         address safe = accountingModule.safe();
 
+        address lockup = MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR;
         address token = MainnetKeeperContracts.USDC;
         address rewardsSweeper = MainnetKeeperContracts.REWARDS_SWEEPER;
 
@@ -27,8 +28,9 @@ contract DeploySablierValidator is Script {
         console.log("  FlexStrategy:", MainnetKeeperContracts.FLEX_STRATEGY);
         console.log("  AccountingModule:", address(accountingModule));
         console.log("  Safe:", safe);
+        console.log("  Lockup (Sablier LockupLinear):", lockup);
         console.log("  Token (USDC):", token);
-        console.log("  Sablier LockupLinear:", MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR);
+        console.log("  Sablier BatchLockup:", MainnetKeeperContracts.SABLIER_BATCH_LOCKUP);
         console.log("  Allowed Recipient (RewardsSweeper):", rewardsSweeper);
 
         address[] memory allowedRecipients = new address[](1);
@@ -36,7 +38,8 @@ contract DeploySablierValidator is Script {
 
         vm.startBroadcast();
 
-        StrategyKeeperSablierValidator validator = new StrategyKeeperSablierValidator(safe, token, allowedRecipients);
+        StrategyKeeperSablierValidator validator =
+            new StrategyKeeperSablierValidator(safe, lockup, token, allowedRecipients);
 
         vm.stopBroadcast();
 
@@ -46,6 +49,7 @@ contract DeploySablierValidator is Script {
         console.log("");
         console.log("Validator configuration:");
         console.log("  safe():", validator.safe());
+        console.log("  lockup():", validator.lockup());
         console.log("  token():", validator.token());
         console.log("  isAllowedRecipient(rewardsSweeper):", validator.isAllowedRecipient(rewardsSweeper));
         console.log("");

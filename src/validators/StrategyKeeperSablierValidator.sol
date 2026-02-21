@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {IValidator} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/src/interface/IValidator.sol";
 import {ISablierLockupLinear} from "src/interfaces/sablier/ISablierLockupLinear.sol";
+import {ISablierBatchLockup} from "src/interfaces/sablier/ISablierBatchLockup.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
 /// @title StrategyKeeperSablierValidator
@@ -13,14 +14,15 @@ import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.so
 ///      - token must be the configured token
 ///      - stream must be cancelable
 ///      - stream must be transferable
+///      Supports both single stream (ISablierLockupLinear) and batch stream (ISablierBatchLockup) creation.
 contract StrategyKeeperSablierValidator is IValidator {
-    string public constant VERSION = "0.1.0";
+    string public constant VERSION = "0.2.0";
 
     /*//////////////////////////////////////////////////////////////
                                  ERRORS
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Thrown when the function selector doesn't match createWithTimestampsLL
+    /// @notice Thrown when the function selector doesn't match a supported function
     error InvalidFunctionSelector(bytes4 selector);
 
     /// @notice Thrown when the sender is not the configured safe
@@ -44,6 +46,12 @@ contract StrategyKeeperSablierValidator is IValidator {
     /// @notice Thrown when the allowed recipients array is empty
     error EmptyAllowedRecipients();
 
+    /// @notice Thrown when the lockup address doesn't match the configured lockup
+    error InvalidLockupAddress(address lockup, address expectedLockup);
+
+    /// @notice Thrown when the batch array is empty
+    error EmptyBatch();
+
     /*//////////////////////////////////////////////////////////////
                                  EVENTS
     //////////////////////////////////////////////////////////////*/
@@ -57,6 +65,9 @@ contract StrategyKeeperSablierValidator is IValidator {
 
     /// @notice The safe address that must be the sender of the stream
     address public immutable safe;
+
+    /// @notice The Sablier LockupLinear contract address (validated in batch calls)
+    address public immutable lockup;
 
     /// @notice The token that must be used for the stream
     address public immutable token;
@@ -73,14 +84,17 @@ contract StrategyKeeperSablierValidator is IValidator {
 
     /// @notice Creates a new StrategyKeeperSablierValidator
     /// @param _safe The safe address that must be the sender of streams
+    /// @param _lockup The Sablier LockupLinear contract address
     /// @param _token The token address that must be used for streams
     /// @param _allowedRecipients Array of addresses that can receive streams
-    constructor(address _safe, address _token, address[] memory _allowedRecipients) {
+    constructor(address _safe, address _lockup, address _token, address[] memory _allowedRecipients) {
         if (_safe == address(0)) revert ZeroAddress();
+        if (_lockup == address(0)) revert ZeroAddress();
         if (_token == address(0)) revert ZeroAddress();
         if (_allowedRecipients.length == 0) revert EmptyAllowedRecipients();
 
         safe = _safe;
+        lockup = _lockup;
         token = _token;
 
         for (uint256 i = 0; i < _allowedRecipients.length; i++) {
@@ -96,7 +110,7 @@ contract StrategyKeeperSablierValidator is IValidator {
                             EXTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Validates a Sablier createWithTimestampsLL call
+    /// @notice Validates a Sablier stream creation call (single or batch)
     /// @param target The Sablier contract address (not validated here, should be validated by the rule)
     /// @param value The ETH value (should be 0 for this call)
     /// @param data The calldata containing the function selector and parameters
@@ -111,59 +125,78 @@ contract StrategyKeeperSablierValidator is IValidator {
 
         // Extract and verify function selector
         bytes4 selector = bytes4(data[:4]);
-        if (selector != ISablierLockupLinear.createWithTimestampsLL.selector) {
+
+        if (selector == ISablierLockupLinear.createWithTimestampsLL.selector) {
+            _validateSingle(data[4:]);
+        } else if (selector == ISablierBatchLockup.createWithTimestampsLL.selector) {
+            _validateBatch(data[4:]);
+        } else {
             revert InvalidFunctionSelector(selector);
         }
+    }
 
-        // Decode the CreateWithTimestamps struct from calldata
-        // The struct is ABI-encoded as follows:
-        // - sender (address, 32 bytes)
-        // - recipient (address, 32 bytes)
-        // - depositAmount (uint128, 32 bytes)
-        // - token (address, 32 bytes)
-        // - cancelable (bool, 32 bytes)
-        // - transferable (bool, 32 bytes)
-        // - timestamps.start (uint40, packed with timestamps.end)
-        // - timestamps.end (uint40)
-        // - shape (string, dynamic - offset pointer followed by length and data)
-        //
-        // Note: For structs passed as calldata, the encoding is different from memory encoding
-        // The params struct is passed as a pointer to the actual data location
+    /*//////////////////////////////////////////////////////////////
+                            INTERNAL FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
 
-        // Skip the 4-byte selector
-        bytes calldata params = data[4:];
+    /// @notice Validates a single createWithTimestampsLL call
+    /// @param params The calldata after the selector
+    function _validateSingle(bytes calldata params) internal view {
+        (ISablierLockupLinear.CreateWithTimestamps memory createParams,,) =
+            abi.decode(params, (ISablierLockupLinear.CreateWithTimestamps, ISablierLockupLinear.UnlockAmounts, uint40));
 
-        // Decode the parameters
-        // The first param (CreateWithTimestamps) is a struct, which is encoded as a tuple
-        // followed by UnlockAmounts struct and uint40 cliffTime
-        (
-            ISablierLockupLinear.CreateWithTimestamps memory createParams,
-            , // UnlockAmounts - not validated
-                // cliffTime - not validated
-        ) = abi.decode(params, (ISablierLockupLinear.CreateWithTimestamps, ISablierLockupLinear.UnlockAmounts, uint40));
-
-        // Validate sender is the safe
-        if (createParams.sender != safe) {
-            revert InvalidSender(createParams.sender, safe);
-        }
-
-        // Validate recipient is in the allowed list
-        if (!isAllowedRecipient[createParams.recipient]) {
-            revert InvalidRecipient(createParams.recipient);
-        }
+        _validateStreamParams(createParams.sender, createParams.recipient, createParams.cancelable, createParams.transferable);
 
         // Validate token is the configured token
         if (address(createParams.token) != token) {
             revert InvalidToken(address(createParams.token), token);
         }
+    }
 
-        // Validate stream is cancelable
-        if (!createParams.cancelable) {
+    /// @notice Validates a batch createWithTimestampsLL call
+    /// @param params The calldata after the selector
+    function _validateBatch(bytes calldata params) internal view {
+        (address batchLockup, IERC20 batchToken, ISablierBatchLockup.CreateWithTimestampsLL[] memory batch) =
+            abi.decode(params, (address, IERC20, ISablierBatchLockup.CreateWithTimestampsLL[]));
+
+        // Validate lockup address
+        if (batchLockup != lockup) {
+            revert InvalidLockupAddress(batchLockup, lockup);
+        }
+
+        // Validate token
+        if (address(batchToken) != token) {
+            revert InvalidToken(address(batchToken), token);
+        }
+
+        // Validate batch is not empty
+        if (batch.length == 0) revert EmptyBatch();
+
+        // Validate each item in the batch
+        for (uint256 i = 0; i < batch.length; i++) {
+            _validateStreamParams(batch[i].sender, batch[i].recipient, batch[i].cancelable, batch[i].transferable);
+        }
+    }
+
+    /// @notice Validates common stream parameters
+    /// @param sender The stream sender (must be the safe)
+    /// @param recipient The stream recipient (must be in allowed list)
+    /// @param cancelable Whether the stream is cancelable (must be true)
+    /// @param transferable Whether the stream is transferable (must be true)
+    function _validateStreamParams(address sender, address recipient, bool cancelable, bool transferable) internal view {
+        if (sender != safe) {
+            revert InvalidSender(sender, safe);
+        }
+
+        if (!isAllowedRecipient[recipient]) {
+            revert InvalidRecipient(recipient);
+        }
+
+        if (!cancelable) {
             revert StreamMustBeCancelable();
         }
 
-        // Validate stream is transferable
-        if (!createParams.transferable) {
+        if (!transferable) {
             revert StreamMustBeTransferable();
         }
     }
