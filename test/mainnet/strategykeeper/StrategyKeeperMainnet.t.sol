@@ -11,6 +11,9 @@ import {SafeProxy} from "lib/safe-smart-account/contracts/proxies/SafeProxy.sol"
 import {Enum} from "lib/safe-smart-account/contracts/libraries/Enum.sol";
 import {IAccessControl} from "lib/openzeppelin-contracts/contracts/access/IAccessControl.sol";
 import {StrategyKeeper, IStrategyKeeper} from "src/StrategyKeeper.sol";
+import {ISablierLockupLinear} from "src/interfaces/sablier/ISablierLockupLinear.sol";
+import {ISablierBatchLockup} from "src/interfaces/sablier/ISablierBatchLockup.sol";
+import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
 
 interface IVaultRoles is IAccessControl {
     function PROCESSOR_ROLE() external view returns (bytes32);
@@ -39,6 +42,7 @@ contract StrategyKeeperMainnetTest is Test {
     address constant BORROWER = 0xaa7f79Bb105833D655D1C13C175142c44e209912;
     address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
     address constant SABLIER = 0xcF8ce57fa442ba50aCbC57147a62aD03873FfA73;
+    address constant SABLIER_BATCH_LOCKUP = 0x0636D83B184D65C242c43de6AAd10535BFb9D45a;
 
     // Mainnet Safe infrastructure
     address constant SAFE_SINGLETON = 0x41675C099F32341bf84BFc5382aF534df5C7461a;
@@ -307,6 +311,10 @@ contract StrategyKeeperMainnetTest is Test {
     }
 
     function test_processInflows_success() public {
+        // Seed vault with USDC so _shouldProcess triggers (vault >= minThreshold)
+        vm.prank(USDC_WHALE);
+        IERC20(USDC).transfer(VAULT, 20_000e6);
+
         // Get initial balances
         uint256 safeBalanceBefore = IERC20(USDC).balanceOf(address(safe));
         uint256 borrowerBalanceBefore = IERC20(USDC).balanceOf(BORROWER);
@@ -669,9 +677,12 @@ contract StrategyKeeperMainnetTest is Test {
             })
         );
 
-        // Let's first do a process to set lastProcessedTimestamp
-        vm.prank(keeperBot);
-        keeper.processInflows();
+        // Use manual processInflows to set lastProcessedTimestamp
+        // (bypasses _shouldProcess, so we don't need to seed the vault for this step)
+        IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
+        uint256 available = IERC20(USDC).balanceOf(address(safe)) - cfg.minResidual;
+        vm.prank(powerKeeperBot);
+        keeper.processInflows(0, available);
 
         // Now lastProcessedTimestamp is set to current block.timestamp
         assertEq(keeper.lastProcessedTimestamp(), block.timestamp, "lastProcessedTimestamp should be set");
@@ -730,25 +741,9 @@ contract StrategyKeeperMainnetTest is Test {
     }
 
     function test_lastProcessedTimestamp_updatedAfterProcess() public {
-        vm.prank(admin);
-        keeper.setConfig(
-            IStrategyKeeper.KeeperConfig({
-                vault: VAULT,
-                targetStrategy: TARGET_STRATEGY,
-                safe: address(safe),
-                baseAsset: USDC,
-                borrower: BORROWER,
-                feeWallet: FEE_WALLET,
-                streamReceiver: streamReceiver,
-                sablier: SABLIER,
-                minThreshold: type(uint256).max,
-                minResidual: 1_000e6,
-                apr: 0.121e18,
-                holdingPeriod: 28 days,
-                minProcessingPercent: 0.01e18,
-                feeFraction: 11
-            })
-        );
+        // Seed vault with USDC above minThreshold so processInflows triggers
+        vm.prank(USDC_WHALE);
+        IERC20(USDC).transfer(VAULT, 20_000e6);
 
         uint256 expectedTimestamp = block.timestamp;
         vm.prank(keeperBot);
@@ -766,5 +761,87 @@ contract StrategyKeeperMainnetTest is Test {
         vm.prank(admin);
         vm.expectRevert(IStrategyKeeper.InvalidConfiguration.selector);
         keeper.setConfig(cfg);
+    }
+
+    // ======== Batch Lockup tests ========
+
+    function test_batchLockupExists() public view {
+        assertTrue(SABLIER_BATCH_LOCKUP.code.length > 0, "batch lockup should have code");
+    }
+
+    function test_batchCreateStreams_viaModule() public {
+        uint256 streamAmount1 = 500e6;
+        uint256 streamAmount2 = 800e6;
+        uint256 totalAmount = streamAmount1 + streamAmount2;
+
+        ISablierLockup sablierLockup = ISablierLockup(SABLIER);
+        uint256 nextStreamIdBefore = sablierLockup.nextStreamId();
+
+        // Execute module calls as the keeper (which is an enabled module on the Safe)
+        vm.startPrank(address(keeper));
+
+        // Step 1: Approve BatchLockup to spend USDC from the Safe
+        bytes memory approveData = abi.encodeCall(IERC20.approve, (SABLIER_BATCH_LOCKUP, totalAmount));
+        bool success =
+            IGnosisSafe(address(safe)).execTransactionFromModule(USDC, 0, approveData, IGnosisSafe.Operation.Call);
+        assertTrue(success, "Approve should succeed");
+
+        // Step 2: Build batch params
+        ISablierBatchLockup.CreateWithTimestampsLL[] memory batch = new ISablierBatchLockup.CreateWithTimestampsLL[](2);
+
+        batch[0] = ISablierBatchLockup.CreateWithTimestampsLL({
+            sender: address(safe),
+            recipient: streamReceiver,
+            depositAmount: uint128(streamAmount1),
+            cancelable: true,
+            transferable: true,
+            timestamps: ISablierLockupLinear.Timestamps({
+                start: uint40(block.timestamp),
+                end: uint40(block.timestamp + 28 days)
+            }),
+            cliffTime: 0,
+            unlockAmounts: ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0}),
+            shape: "linear"
+        });
+
+        batch[1] = ISablierBatchLockup.CreateWithTimestampsLL({
+            sender: address(safe),
+            recipient: streamReceiver,
+            depositAmount: uint128(streamAmount2),
+            cancelable: true,
+            transferable: true,
+            timestamps: ISablierLockupLinear.Timestamps({
+                start: uint40(block.timestamp),
+                end: uint40(block.timestamp + 56 days)
+            }),
+            cliffTime: 0,
+            unlockAmounts: ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0}),
+            shape: "linear"
+        });
+
+        // Step 3: Call batch createWithTimestampsLL from the Safe
+        bytes memory batchData =
+            abi.encodeCall(ISablierBatchLockup.createWithTimestampsLL, (SABLIER, IERC20(USDC), batch));
+        success = IGnosisSafe(address(safe)).execTransactionFromModule(
+            SABLIER_BATCH_LOCKUP, 0, batchData, IGnosisSafe.Operation.Call
+        );
+        assertTrue(success, "Batch create should succeed");
+
+        vm.stopPrank();
+
+        // Verify 2 streams were created
+        assertEq(sablierLockup.nextStreamId(), nextStreamIdBefore + 2, "2 streams should be created");
+        assertEq(sablierLockup.getSender(nextStreamIdBefore), address(safe), "Stream 1 sender should be safe");
+        assertEq(sablierLockup.getRecipient(nextStreamIdBefore), streamReceiver, "Stream 1 recipient should match");
+        assertEq(
+            sablierLockup.getDepositedAmount(nextStreamIdBefore), uint128(streamAmount1), "Stream 1 amount should match"
+        );
+        assertEq(sablierLockup.getSender(nextStreamIdBefore + 1), address(safe), "Stream 2 sender should be safe");
+        assertEq(sablierLockup.getRecipient(nextStreamIdBefore + 1), streamReceiver, "Stream 2 recipient should match");
+        assertEq(
+            sablierLockup.getDepositedAmount(nextStreamIdBefore + 1),
+            uint128(streamAmount2),
+            "Stream 2 amount should match"
+        );
     }
 }

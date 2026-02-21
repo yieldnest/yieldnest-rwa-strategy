@@ -11,6 +11,8 @@ import {StrategyKeeper, IStrategyKeeper} from "src/StrategyKeeper.sol";
 import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
 import {FlexStrategy} from "lib/yieldnest-flex-strategy/src/FlexStrategy.sol";
 import {IAccountingModule} from "lib/yieldnest-flex-strategy/src/AccountingModule.sol";
+import {ISablierLockupLinear} from "src/interfaces/sablier/ISablierLockupLinear.sol";
+import {ISablierBatchLockup} from "src/interfaces/sablier/ISablierBatchLockup.sol";
 import {MainnetKeeperContracts} from "@script/Contracts.sol";
 import {MainnetStrategyActors} from "@script/Actors.sol";
 
@@ -549,5 +551,109 @@ contract StrategyKeeperFlexSafeTest is Test {
         // The real safe's USDC balance counts as the strategy's available assets
         uint256 safeBalance = IERC20(MainnetKeeperContracts.USDC).balanceOf(realSafe);
         assertTrue(safeBalance > 0, "Real safe should hold strategy funds");
+    }
+
+    // ======== Batch Lockup tests on real Safe ========
+
+    function test_batchLockupExists() public view {
+        assertTrue(
+            MainnetKeeperContracts.SABLIER_BATCH_LOCKUP.code.length > 0, "Batch lockup should be a deployed contract"
+        );
+    }
+
+    function test_batchCreateStreams_onRealSafe() public {
+        uint256 streamAmount1 = 500e6;
+        uint256 streamAmount2 = 800e6;
+        uint256 totalAmount = streamAmount1 + streamAmount2;
+
+        ISablierLockup sablier = ISablierLockup(MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR);
+        uint256 nextStreamIdBefore = sablier.nextStreamId();
+        uint256 safeBalanceBefore = IERC20(MainnetKeeperContracts.USDC).balanceOf(realSafe);
+        uint256 sablierBalanceBefore =
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR);
+
+        // Execute module calls as the keeper (which is an enabled module on the real Safe)
+        vm.startPrank(address(keeper));
+
+        // Step 1: Approve BatchLockup to spend USDC from the real Safe (via keeper module)
+        bytes memory approveData =
+            abi.encodeCall(IERC20.approve, (MainnetKeeperContracts.SABLIER_BATCH_LOCKUP, totalAmount));
+        bool success = IGnosisSafe(realSafe).execTransactionFromModule(
+            MainnetKeeperContracts.USDC, 0, approveData, IGnosisSafe.Operation.Call
+        );
+        assertTrue(success, "Approve should succeed");
+
+        // Step 2: Build batch params
+        ISablierBatchLockup.CreateWithTimestampsLL[] memory batch = new ISablierBatchLockup.CreateWithTimestampsLL[](2);
+
+        batch[0] = ISablierBatchLockup.CreateWithTimestampsLL({
+            sender: realSafe,
+            recipient: streamReceiver,
+            depositAmount: uint128(streamAmount1),
+            cancelable: true,
+            transferable: true,
+            timestamps: ISablierLockupLinear.Timestamps({
+                start: uint40(block.timestamp),
+                end: uint40(block.timestamp + 28 days)
+            }),
+            cliffTime: 0,
+            unlockAmounts: ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0}),
+            shape: "linear"
+        });
+
+        batch[1] = ISablierBatchLockup.CreateWithTimestampsLL({
+            sender: realSafe,
+            recipient: streamReceiver,
+            depositAmount: uint128(streamAmount2),
+            cancelable: true,
+            transferable: true,
+            timestamps: ISablierLockupLinear.Timestamps({
+                start: uint40(block.timestamp),
+                end: uint40(block.timestamp + 56 days)
+            }),
+            cliffTime: 0,
+            unlockAmounts: ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0}),
+            shape: "linear"
+        });
+
+        // Step 3: Call batch createWithTimestampsLL from the real Safe via keeper module
+        bytes memory batchData = abi.encodeCall(
+            ISablierBatchLockup.createWithTimestampsLL,
+            (MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR, IERC20(MainnetKeeperContracts.USDC), batch)
+        );
+        success = IGnosisSafe(realSafe).execTransactionFromModule(
+            MainnetKeeperContracts.SABLIER_BATCH_LOCKUP, 0, batchData, IGnosisSafe.Operation.Call
+        );
+        assertTrue(success, "Batch create should succeed");
+
+        vm.stopPrank();
+
+        // Verify 2 streams were created
+        assertEq(sablier.nextStreamId(), nextStreamIdBefore + 2, "2 streams should be created");
+
+        // Verify stream details
+        assertEq(sablier.getSender(nextStreamIdBefore), realSafe, "Stream 1 sender should be real safe");
+        assertEq(sablier.getRecipient(nextStreamIdBefore), streamReceiver, "Stream 1 recipient should match");
+        assertEq(sablier.getDepositedAmount(nextStreamIdBefore), uint128(streamAmount1), "Stream 1 amount should match");
+        assertTrue(sablier.isCancelable(nextStreamIdBefore), "Stream 1 should be cancelable");
+        assertTrue(sablier.isTransferable(nextStreamIdBefore), "Stream 1 should be transferable");
+
+        assertEq(sablier.getSender(nextStreamIdBefore + 1), realSafe, "Stream 2 sender should be real safe");
+        assertEq(sablier.getRecipient(nextStreamIdBefore + 1), streamReceiver, "Stream 2 recipient should match");
+        assertEq(
+            sablier.getDepositedAmount(nextStreamIdBefore + 1), uint128(streamAmount2), "Stream 2 amount should match"
+        );
+
+        // Verify USDC balances
+        assertEq(
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(realSafe),
+            safeBalanceBefore - totalAmount,
+            "Safe balance should decrease by total amount"
+        );
+        assertEq(
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR),
+            sablierBalanceBefore + totalAmount,
+            "Sablier should hold the total stream amount"
+        );
     }
 }

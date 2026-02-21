@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {IValidator} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/src/interface/IValidator.sol";
 import {IVault} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/src/interface/IVault.sol";
 import {ISablierLockupLinear} from "src/interfaces/sablier/ISablierLockupLinear.sol";
+import {ISablierBatchLockup} from "src/interfaces/sablier/ISablierBatchLockup.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
 /// @title SablierRules
@@ -59,20 +60,57 @@ library SablierRules {
         return RuleParams({contractAddress: sablierContract, funcSig: funcSig, rule: rule});
     }
 
-    /// @notice Get the rule for approving tokens to Sablier
+    /// @notice Get the rule for batch creating Sablier streams (no validator)
+    /// @param batchLockupContract The address of the Sablier BatchLockup contract
+    /// @return RuleParams for batch createWithTimestampsLL function
+    function getCreateBatchStreamRule(address batchLockupContract) internal pure returns (RuleParams memory) {
+        return getCreateBatchStreamRuleWithValidator(batchLockupContract, IValidator(address(0)));
+    }
+
+    /// @notice Get the rule for batch creating Sablier streams with a custom validator
+    /// @param batchLockupContract The address of the Sablier BatchLockup contract
+    /// @param validator The validator contract to use for additional validation
+    /// @return RuleParams for batch createWithTimestampsLL function
+    function getCreateBatchStreamRuleWithValidator(address batchLockupContract, IValidator validator)
+        internal
+        pure
+        returns (RuleParams memory)
+    {
+        bytes4 funcSig = ISablierBatchLockup.createWithTimestampsLL.selector;
+
+        IVault.ParamRule[] memory paramRules = new IVault.ParamRule[](0);
+
+        IVault.FunctionRule memory rule =
+            IVault.FunctionRule({isActive: true, paramRules: paramRules, validator: validator});
+
+        return RuleParams({contractAddress: batchLockupContract, funcSig: funcSig, rule: rule});
+    }
+
+    /// @notice Get the rule for approving tokens to a single spender
     /// @param tokenContract The address of the ERC20 token contract
     /// @param spender The address allowed to spend (typically Sablier contract)
     /// @return RuleParams for approve function
     function getApproveRule(address tokenContract, address spender) internal pure returns (RuleParams memory) {
+        address[] memory spenders = new address[](1);
+        spenders[0] = spender;
+        return getApproveRule(tokenContract, spenders);
+    }
+
+    /// @notice Get the rule for approving tokens to multiple spenders
+    /// @param tokenContract The address of the ERC20 token contract
+    /// @param spenders The addresses allowed to spend
+    /// @return RuleParams for approve function
+    function getApproveRule(address tokenContract, address[] memory spenders)
+        internal
+        pure
+        returns (RuleParams memory)
+    {
         bytes4 funcSig = IERC20.approve.selector;
 
         IVault.ParamRule[] memory paramRules = new IVault.ParamRule[](2);
 
         // First param: spender address - must be in allowlist
-        address[] memory spenderAllowList = new address[](1);
-        spenderAllowList[0] = spender;
-        paramRules[0] =
-            IVault.ParamRule({paramType: IVault.ParamType.ADDRESS, isArray: false, allowList: spenderAllowList});
+        paramRules[0] = IVault.ParamRule({paramType: IVault.ParamType.ADDRESS, isArray: false, allowList: spenders});
 
         // Second param: amount - any uint256 is allowed
         paramRules[1] =
