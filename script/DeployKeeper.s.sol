@@ -12,11 +12,11 @@ import {MainnetKeeperContracts} from "@script/Contracts.sol";
 /// @notice Deployment script for StrategyKeeper (module-based execution)
 contract DeployKeeper is Script {
     // Deployment parameters (customize these before deployment)
-    uint256 public minThreshold = 10_000e6; // 10,000 USDC minimum to trigger allocation
+    uint256 public minThreshold = 200_000e6; // 200,000 USDC minimum to trigger allocation
     uint256 public minResidual = 1_000e6; // Keep 1,000 USDC in Safe
     uint256 public apr = 0.121e18; // 12.1% APR
     uint256 public holdingPeriod = 28 days;
-    uint256 public minProcessingPercent = 0.01e18; // 1%
+    uint256 public minProcessingPercent = 0.03e18; // 3%. Eg if vault has 3.5m then 3% is 105k.
     uint256 public feeFraction = 11; // 1/11 to fee wallet, 10/11 to stream
 
     StrategyKeeper public keeperImplementation;
@@ -63,10 +63,17 @@ contract DeployKeeper is Script {
         // 3. Transfer roles to admin and renounce deployer roles
         bytes32 defaultAdminRole = keeper.DEFAULT_ADMIN_ROLE();
         bytes32 configManagerRole = keeper.CONFIG_MANAGER_ROLE();
+        bytes32 keeperRole = keeper.KEEPER_ROLE();
+        bytes32 powerKeeperRole = keeper.POWER_KEEPER_ROLE();
 
         // Grant roles to admin
         keeper.grantRole(defaultAdminRole, admin);
         keeper.grantRole(configManagerRole, admin);
+
+        // Grant keeper roles to processor
+        address processor = actors.PROCESSOR();
+        keeper.grantRole(keeperRole, processor);
+        keeper.grantRole(powerKeeperRole, processor);
 
         // Renounce deployer roles
         keeper.renounceRole(configManagerRole, deployer);
@@ -92,13 +99,13 @@ contract DeployKeeper is Script {
         console.log("");
         console.log("=== Roles Transferred ===");
         console.log("Admin:", admin);
+        console.log("KEEPER_ROLE & POWER_KEEPER_ROLE granted to Processor:", processor);
         console.log("Deployer renounced all roles");
         console.log("");
         console.log("=== Required Manual Steps ===");
         console.log("1. Enable StrategyKeeper as a module on the Safe:", address(keeper));
         console.log("   - Execute: Safe.enableModule(keeperAddress)");
         console.log("2. Grant PROCESSOR_ROLE to StrategyKeeper on vault");
-        console.log("3. Grant KEEPER_ROLE to keeper bot address");
         console.log("");
         console.log("Deployment saved to: deployments/keeper-deployment.json");
     }
