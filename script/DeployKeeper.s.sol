@@ -65,10 +65,15 @@ contract DeployKeeper is Script {
         bytes32 configManagerRole = keeper.CONFIG_MANAGER_ROLE();
         bytes32 keeperRole = keeper.KEEPER_ROLE();
         bytes32 powerKeeperRole = keeper.POWER_KEEPER_ROLE();
+        bytes32 pauserRole = keeper.PAUSER_ROLE();
 
         // Grant roles to admin
         keeper.grantRole(defaultAdminRole, admin);
         keeper.grantRole(configManagerRole, admin);
+        keeper.grantRole(pauserRole, admin);
+
+        // Grant pauser role to YnDev
+        keeper.grantRole(pauserRole, actors.PAUSER());
 
         // Grant keeper roles to processor
         address processor = actors.PROCESSOR();
@@ -76,6 +81,7 @@ contract DeployKeeper is Script {
         keeper.grantRole(powerKeeperRole, processor);
 
         // Renounce deployer roles
+        keeper.renounceRole(pauserRole, deployer);
         keeper.renounceRole(configManagerRole, deployer);
         keeper.renounceRole(defaultAdminRole, deployer);
 
