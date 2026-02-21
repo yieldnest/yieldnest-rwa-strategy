@@ -10,6 +10,8 @@ import {StrategyKeeper, IStrategyKeeper} from "src/StrategyKeeper.sol";
 import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
 import {FlexStrategy} from "lib/yieldnest-flex-strategy/src/FlexStrategy.sol";
 import {IAccountingModule} from "lib/yieldnest-flex-strategy/src/AccountingModule.sol";
+import {MainnetKeeperContracts} from "@script/Contracts.sol";
+import {MainnetStrategyActors} from "@script/Actors.sol";
 
 interface IVaultRoles is IAccessControl {
     function PROCESSOR_ROLE() external view returns (bytes32);
@@ -33,19 +35,8 @@ interface ISablierLockup {
 ///         the keeper works with the actual deployed Safe that holds strategy funds.
 /// @dev Run with: forge test --match-path "test/mainnet/strategykeeper/StrategyKeeperFlexSafe*" --fork-url <RPC_URL>
 contract StrategyKeeperFlexSafeTest is Test {
-    // Mainnet addresses
-    address constant VAULT = 0x01Ba69727E2860b37bc1a2bd56999c1aFb4C15D8; // ynRWAx
-    address constant FLEX_STRATEGY = 0xF6e1443e3F70724cec8C0a779C7C35A8DcDA928B;
-    address constant FEE_WALLET = 0xC92Dd1837EBcb0365eB0a8795f9c8E474f8B6183;
-    address constant BORROWER = 0xaa7f79Bb105833D655D1C13C175142c44e209912;
-    address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
-    address constant SABLIER = 0xcF8ce57fa442ba50aCbC57147a62aD03873FfA73;
-
     // USDC whale for funding
     address constant USDC_WHALE = 0x37305B1cD40574E4C5Ce33f8e8306Be057fD7341;
-
-    // Vault admin (YnSecurityCouncil) - needed to grant PROCESSOR_ROLE
-    address constant VAULT_ADMIN = 0xfcad670592a3b24869C0b51a6c6FDED4F95D6975;
 
     // Test accounts
     address public admin;
@@ -69,7 +60,7 @@ contract StrategyKeeperFlexSafeTest is Test {
         streamReceiver = makeAddr("streamReceiver");
 
         // Get the REAL Safe from the FlexStrategy's accountingModule
-        flexStrategy = FlexStrategy(payable(FLEX_STRATEGY));
+        flexStrategy = FlexStrategy(payable(MainnetKeeperContracts.FLEX_STRATEGY));
         accountingModule = flexStrategy.accountingModule();
         realSafe = accountingModule.safe();
 
@@ -82,14 +73,14 @@ contract StrategyKeeperFlexSafeTest is Test {
             (
                 admin,
                 IStrategyKeeper.KeeperConfig({
-                    vault: VAULT,
-                    targetStrategy: FLEX_STRATEGY,
+                    vault: MainnetKeeperContracts.YNRWAX,
+                    targetStrategy: MainnetKeeperContracts.FLEX_STRATEGY,
                     safe: realSafe,
-                    baseAsset: USDC,
-                    borrower: BORROWER,
-                    feeWallet: FEE_WALLET,
+                    baseAsset: MainnetKeeperContracts.USDC,
+                    borrower: MainnetKeeperContracts.BORROWER,
+                    feeWallet: MainnetKeeperContracts.FEE_WALLET,
                     streamReceiver: streamReceiver,
-                    sablier: SABLIER,
+                    sablier: MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR,
                     minThreshold: 10_000e6,
                     minResidual: 1_000e6,
                     apr: 0.121e18,
@@ -117,25 +108,26 @@ contract StrategyKeeperFlexSafeTest is Test {
 
         // Fund the real safe with USDC from whale
         vm.prank(USDC_WHALE);
-        IERC20(USDC).transfer(realSafe, 100_000e6);
+        IERC20(MainnetKeeperContracts.USDC).transfer(realSafe, 100_000e6);
 
         // Grant PROCESSOR_ROLE to keeper on the vault
-        bytes32 processorRole = IVaultRoles(VAULT).PROCESSOR_ROLE();
-        vm.prank(VAULT_ADMIN);
-        IVaultRoles(VAULT).grantRole(processorRole, address(keeper));
+        MainnetStrategyActors actors = new MainnetStrategyActors();
+        bytes32 processorRole = IVaultRoles(MainnetKeeperContracts.YNRWAX).PROCESSOR_ROLE();
+        vm.prank(actors.ADMIN());
+        IVaultRoles(MainnetKeeperContracts.YNRWAX).grantRole(processorRole, address(keeper));
     }
 
     // ======== Setup verification ========
 
-    function test_realSafeMatchesActors() public view {
-        // Verify the safe address matches the known deployed Safe
-        address expectedSafe = 0xb34E69c23Df216334496DFFd455618249E6bbFa9;
-        assertEq(realSafe, expectedSafe, "Real safe should match the known deployed Safe address");
+    function test_realSafeMatchesActors() public {
+        // Verify the safe address matches the known deployed Safe from Actors
+        MainnetStrategyActors actors = new MainnetStrategyActors();
+        assertEq(realSafe, actors.SAFE(), "Real safe should match the known deployed Safe address");
     }
 
     function test_safeObtainedFromAccountingModule() public view {
         // Verify we can chain calls: strategy -> accountingModule -> safe
-        address safe = FlexStrategy(payable(FLEX_STRATEGY)).accountingModule().safe();
+        address safe = FlexStrategy(payable(MainnetKeeperContracts.FLEX_STRATEGY)).accountingModule().safe();
         assertEq(safe, realSafe, "Safe from accountingModule should match");
         assertTrue(safe != address(0), "Safe should not be zero address");
     }
@@ -151,13 +143,19 @@ contract StrategyKeeperFlexSafeTest is Test {
     }
 
     function test_realSafeHasUSDC() public view {
-        assertGe(IERC20(USDC).balanceOf(realSafe), 100_000e6, "Real safe should have at least 100k USDC");
+        assertGe(
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(realSafe),
+            100_000e6,
+            "Real safe should have at least 100k USDC"
+        );
     }
 
     function test_configPointsToRealSafe() public view {
         IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
         assertEq(cfg.safe, realSafe, "Config safe should be the real safe from accountingModule");
-        assertEq(cfg.targetStrategy, FLEX_STRATEGY, "Config targetStrategy should be FlexStrategy");
+        assertEq(
+            cfg.targetStrategy, MainnetKeeperContracts.FLEX_STRATEGY, "Config targetStrategy should be FlexStrategy"
+        );
     }
 
     function test_roles() public view {
@@ -176,18 +174,20 @@ contract StrategyKeeperFlexSafeTest is Test {
     ///         Accounts for vault USDC being allocated to the safe via the strategy.
     function _expectedAutoAvailable() internal view returns (uint256 available) {
         IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
-        uint256 vaultUsdcBalance = IERC20(USDC).balanceOf(VAULT);
+        uint256 vaultUsdcBalance = IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.YNRWAX);
         uint256 vaultAllocation = vaultUsdcBalance >= cfg.minThreshold ? vaultUsdcBalance : 0;
-        uint256 safeBalanceAfterAllocation = IERC20(USDC).balanceOf(realSafe) + vaultAllocation;
+        uint256 safeBalanceAfterAllocation = IERC20(MainnetKeeperContracts.USDC).balanceOf(realSafe) + vaultAllocation;
         available = safeBalanceAfterAllocation - cfg.minResidual;
     }
 
     function test_processInflows_withRealSafe() public {
-        uint256 borrowerBalanceBefore = IERC20(USDC).balanceOf(BORROWER);
-        uint256 feeWalletBalanceBefore = IERC20(USDC).balanceOf(FEE_WALLET);
-        uint256 sablierBalanceBefore = IERC20(USDC).balanceOf(SABLIER);
+        uint256 borrowerBalanceBefore = IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.BORROWER);
+        uint256 feeWalletBalanceBefore =
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.FEE_WALLET);
+        uint256 sablierBalanceBefore =
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR);
 
-        ISablierLockup sablier = ISablierLockup(SABLIER);
+        ISablierLockup sablier = ISablierLockup(MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR);
         uint256 expectedStreamId = sablier.nextStreamId();
 
         IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
@@ -207,18 +207,30 @@ contract StrategyKeeperFlexSafeTest is Test {
 
         // Verify borrower received principal
         assertEq(
-            IERC20(USDC).balanceOf(BORROWER), borrowerBalanceBefore + principal, "Borrower should receive principal"
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.BORROWER),
+            borrowerBalanceBefore + principal,
+            "Borrower should receive principal"
         );
 
         // Verify fee wallet received fee
-        assertEq(IERC20(USDC).balanceOf(FEE_WALLET), feeWalletBalanceBefore + fee, "Fee wallet should receive fee");
+        assertEq(
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.FEE_WALLET),
+            feeWalletBalanceBefore + fee,
+            "Fee wallet should receive fee"
+        );
 
         // Verify safe only has minResidual left
-        assertEq(IERC20(USDC).balanceOf(realSafe), cfg.minResidual, "Real safe should only have minResidual left");
+        assertEq(
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(realSafe),
+            cfg.minResidual,
+            "Real safe should only have minResidual left"
+        );
 
         // Verify Sablier stream created
         assertEq(
-            IERC20(USDC).balanceOf(SABLIER), sablierBalanceBefore + streamAmount, "Sablier should hold stream amount"
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR),
+            sablierBalanceBefore + streamAmount,
+            "Sablier should hold stream amount"
         );
 
         // Verify stream details
@@ -238,12 +250,14 @@ contract StrategyKeeperFlexSafeTest is Test {
     }
 
     function test_processInflowsManual_withRealSafe() public {
-        uint256 safeBalanceBefore = IERC20(USDC).balanceOf(realSafe);
-        uint256 borrowerBalanceBefore = IERC20(USDC).balanceOf(BORROWER);
-        uint256 feeWalletBalanceBefore = IERC20(USDC).balanceOf(FEE_WALLET);
-        uint256 sablierBalanceBefore = IERC20(USDC).balanceOf(SABLIER);
+        uint256 safeBalanceBefore = IERC20(MainnetKeeperContracts.USDC).balanceOf(realSafe);
+        uint256 borrowerBalanceBefore = IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.BORROWER);
+        uint256 feeWalletBalanceBefore =
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.FEE_WALLET);
+        uint256 sablierBalanceBefore =
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR);
 
-        ISablierLockup sablier = ISablierLockup(SABLIER);
+        ISablierLockup sablier = ISablierLockup(MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR);
         uint256 expectedStreamId = sablier.nextStreamId();
 
         IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
@@ -262,18 +276,30 @@ contract StrategyKeeperFlexSafeTest is Test {
 
         // Verify borrower received principal
         assertEq(
-            IERC20(USDC).balanceOf(BORROWER), borrowerBalanceBefore + principal, "Borrower should receive principal"
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.BORROWER),
+            borrowerBalanceBefore + principal,
+            "Borrower should receive principal"
         );
 
         // Verify fee wallet received fee
-        assertEq(IERC20(USDC).balanceOf(FEE_WALLET), feeWalletBalanceBefore + fee, "Fee wallet should receive fee");
+        assertEq(
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.FEE_WALLET),
+            feeWalletBalanceBefore + fee,
+            "Fee wallet should receive fee"
+        );
 
         // Verify safe only has minResidual left
-        assertEq(IERC20(USDC).balanceOf(realSafe), cfg.minResidual, "Real safe should only have minResidual left");
+        assertEq(
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(realSafe),
+            cfg.minResidual,
+            "Real safe should only have minResidual left"
+        );
 
         // Verify stream details
         assertEq(
-            IERC20(USDC).balanceOf(SABLIER), sablierBalanceBefore + streamAmount, "Sablier should hold stream amount"
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR),
+            sablierBalanceBefore + streamAmount,
+            "Sablier should hold stream amount"
         );
         assertEq(sablier.nextStreamId(), expectedStreamId + 1, "Stream ID should increment");
         assertEq(sablier.getSender(expectedStreamId), realSafe, "Stream sender should be real safe");
@@ -284,10 +310,12 @@ contract StrategyKeeperFlexSafeTest is Test {
     }
 
     function test_processInflowsManual_partialAvailable_withRealSafe() public {
-        uint256 safeBalanceBefore = IERC20(USDC).balanceOf(realSafe);
-        uint256 borrowerBalanceBefore = IERC20(USDC).balanceOf(BORROWER);
-        uint256 feeWalletBalanceBefore = IERC20(USDC).balanceOf(FEE_WALLET);
-        uint256 sablierBalanceBefore = IERC20(USDC).balanceOf(SABLIER);
+        uint256 safeBalanceBefore = IERC20(MainnetKeeperContracts.USDC).balanceOf(realSafe);
+        uint256 borrowerBalanceBefore = IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.BORROWER);
+        uint256 feeWalletBalanceBefore =
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.FEE_WALLET);
+        uint256 sablierBalanceBefore =
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR);
 
         IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
         uint256 fullAvailable = safeBalanceBefore - cfg.minResidual;
@@ -303,20 +331,32 @@ contract StrategyKeeperFlexSafeTest is Test {
 
         // Verify borrower received principal
         assertEq(
-            IERC20(USDC).balanceOf(BORROWER), borrowerBalanceBefore + principal, "Borrower should receive principal"
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.BORROWER),
+            borrowerBalanceBefore + principal,
+            "Borrower should receive principal"
         );
 
         // Verify fee wallet received fee
-        assertEq(IERC20(USDC).balanceOf(FEE_WALLET), feeWalletBalanceBefore + fee, "Fee wallet should receive fee");
+        assertEq(
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.FEE_WALLET),
+            feeWalletBalanceBefore + fee,
+            "Fee wallet should receive fee"
+        );
 
         // Verify safe retained more than minResidual
         uint256 expectedSafeBalance = safeBalanceBefore - partialAvailable;
-        assertEq(IERC20(USDC).balanceOf(realSafe), expectedSafeBalance, "Safe should retain extra funds");
+        assertEq(
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(realSafe),
+            expectedSafeBalance,
+            "Safe should retain extra funds"
+        );
         assertTrue(expectedSafeBalance > cfg.minResidual, "Safe should have more than minResidual");
 
         // Verify stream
         assertEq(
-            IERC20(USDC).balanceOf(SABLIER), sablierBalanceBefore + streamAmount, "Sablier should hold stream amount"
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR),
+            sablierBalanceBefore + streamAmount,
+            "Sablier should hold stream amount"
         );
     }
 
@@ -324,7 +364,7 @@ contract StrategyKeeperFlexSafeTest is Test {
 
     function test_processInflows_emitsEvent_withRealSafe() public {
         IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
-        uint256 safeBalance = IERC20(USDC).balanceOf(realSafe);
+        uint256 safeBalance = IERC20(MainnetKeeperContracts.USDC).balanceOf(realSafe);
         uint256 available = safeBalance - cfg.minResidual;
 
         uint256 interest = (available * cfg.apr * cfg.holdingPeriod) / 365 days / 1e18;
@@ -357,7 +397,7 @@ contract StrategyKeeperFlexSafeTest is Test {
         assertEq(keeper.lastProcessedTimestamp(), 0, "Should start at 0");
 
         IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
-        uint256 available = IERC20(USDC).balanceOf(realSafe) - cfg.minResidual;
+        uint256 available = IERC20(MainnetKeeperContracts.USDC).balanceOf(realSafe) - cfg.minResidual;
 
         uint256 expectedTimestamp = block.timestamp;
         vm.prank(powerKeeperBot);
@@ -396,7 +436,7 @@ contract StrategyKeeperFlexSafeTest is Test {
     }
 
     function test_processInflowsManual_revertOnInsufficientBalance() public {
-        uint256 safeBalance = IERC20(USDC).balanceOf(realSafe);
+        uint256 safeBalance = IERC20(MainnetKeeperContracts.USDC).balanceOf(realSafe);
         IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
 
         // Try to disburse more than safe has
@@ -415,7 +455,7 @@ contract StrategyKeeperFlexSafeTest is Test {
 
     function test_moduleCanExecuteTransfers_onRealSafe() public {
         // Verify the keeper (as a module) can execute transfers from the real Safe
-        uint256 safeBalanceBefore = IERC20(USDC).balanceOf(realSafe);
+        uint256 safeBalanceBefore = IERC20(MainnetKeeperContracts.USDC).balanceOf(realSafe);
         assertTrue(safeBalanceBefore > 0, "Safe should have USDC");
 
         // processInflows executes multiple Safe transactions (transfer principal, transfer fee, create stream)
@@ -427,7 +467,11 @@ contract StrategyKeeperFlexSafeTest is Test {
         keeper.processInflows(0, available);
 
         // If we get here without revert, module execution worked on the real Safe
-        assertEq(IERC20(USDC).balanceOf(realSafe), cfg.minResidual, "Module execution should have moved funds");
+        assertEq(
+            IERC20(MainnetKeeperContracts.USDC).balanceOf(realSafe),
+            cfg.minResidual,
+            "Module execution should have moved funds"
+        );
     }
 
     function test_nonModuleCannotExecuteOnRealSafe() public {
@@ -438,14 +482,14 @@ contract StrategyKeeperFlexSafeTest is Test {
             (
                 admin,
                 IStrategyKeeper.KeeperConfig({
-                    vault: VAULT,
-                    targetStrategy: FLEX_STRATEGY,
+                    vault: MainnetKeeperContracts.YNRWAX,
+                    targetStrategy: MainnetKeeperContracts.FLEX_STRATEGY,
                     safe: realSafe,
-                    baseAsset: USDC,
-                    borrower: BORROWER,
-                    feeWallet: FEE_WALLET,
+                    baseAsset: MainnetKeeperContracts.USDC,
+                    borrower: MainnetKeeperContracts.BORROWER,
+                    feeWallet: MainnetKeeperContracts.FEE_WALLET,
                     streamReceiver: streamReceiver,
-                    sablier: SABLIER,
+                    sablier: MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR,
                     minThreshold: 10_000e6,
                     minResidual: 1_000e6,
                     apr: 0.121e18,
@@ -481,18 +525,22 @@ contract StrategyKeeperFlexSafeTest is Test {
 
     function test_strategyAccountingModuleSafeRelationship() public view {
         // Verify the full chain: FlexStrategy -> AccountingModule -> Safe
-        FlexStrategy strat = FlexStrategy(payable(FLEX_STRATEGY));
+        FlexStrategy strat = FlexStrategy(payable(MainnetKeeperContracts.FLEX_STRATEGY));
         IAccountingModule am = strat.accountingModule();
 
         assertEq(address(am), address(accountingModule), "AccountingModule should match");
         assertEq(am.safe(), realSafe, "Safe from accountingModule should match realSafe");
-        assertEq(am.strategy(), FLEX_STRATEGY, "AccountingModule strategy should point back to FlexStrategy");
-        assertEq(am.baseAsset(), USDC, "AccountingModule baseAsset should be USDC");
+        assertEq(
+            am.strategy(),
+            MainnetKeeperContracts.FLEX_STRATEGY,
+            "AccountingModule strategy should point back to FlexStrategy"
+        );
+        assertEq(am.baseAsset(), MainnetKeeperContracts.USDC, "AccountingModule baseAsset should be USDC");
     }
 
     function test_safeIsWhereStrategyFundsReside() public view {
         // The real safe's USDC balance counts as the strategy's available assets
-        uint256 safeBalance = IERC20(USDC).balanceOf(realSafe);
+        uint256 safeBalance = IERC20(MainnetKeeperContracts.USDC).balanceOf(realSafe);
         assertTrue(safeBalance > 0, "Real safe should hold strategy funds");
     }
 }
