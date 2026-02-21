@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {TransparentUpgradeableProxy} from
     "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {IERC4626} from "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 import {IAccessControl} from "lib/openzeppelin-contracts/contracts/access/IAccessControl.sol";
 import {StrategyKeeper, IStrategyKeeper} from "src/StrategyKeeper.sol";
 import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
@@ -181,6 +182,14 @@ contract StrategyKeeperFlexSafeTest is Test {
     }
 
     function test_processInflows_withRealSafe() public {
+        // Seed the vault with enough USDC to exceed minThreshold and trigger auto processing
+        IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
+        uint256 vaultSeed = cfg.minThreshold + 50_000e6;
+        vm.startPrank(USDC_WHALE);
+        IERC20(MainnetKeeperContracts.USDC).approve(MainnetKeeperContracts.YNRWAX, vaultSeed);
+        IERC4626(MainnetKeeperContracts.YNRWAX).deposit(vaultSeed, USDC_WHALE);
+        vm.stopPrank();
+
         uint256 borrowerBalanceBefore = IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.BORROWER);
         uint256 feeWalletBalanceBefore =
             IERC20(MainnetKeeperContracts.USDC).balanceOf(MainnetKeeperContracts.FEE_WALLET);
@@ -189,8 +198,6 @@ contract StrategyKeeperFlexSafeTest is Test {
 
         ISablierLockup sablier = ISablierLockup(MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR);
         uint256 expectedStreamId = sablier.nextStreamId();
-
-        IStrategyKeeper.KeeperConfig memory cfg = keeper.getConfig();
 
         // The auto processInflows allocates vault USDC to the safe via the strategy.
         uint256 available = _expectedAutoAvailable();
