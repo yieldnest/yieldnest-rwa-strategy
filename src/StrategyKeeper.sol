@@ -82,6 +82,9 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
     /// @notice Role granted to the initializer (deployer) to call initialize() once
     bytes32 public constant INITIALIZER_ROLE = keccak256("INITIALIZER_ROLE");
 
+    /// @notice Contract version
+    string public constant VERSION = "0.1.0";
+
     /// @notice Precision for percentage calculations (1e18 = 100%)
     uint256 public constant PRECISION = 1e18;
 
