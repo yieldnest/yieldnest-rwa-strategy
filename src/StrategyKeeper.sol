@@ -7,7 +7,6 @@ import {ReentrancyGuard} from "lib/openzeppelin-contracts/contracts/utils/Reentr
 import {Pausable} from "lib/openzeppelin-contracts/contracts/utils/Pausable.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
-import {SafeERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
 import {ISablierLockupLinear} from "src/interfaces/sablier/ISablierLockupLinear.sol";
@@ -41,6 +40,7 @@ interface IStrategyKeeper {
     error NoFundsToProcess();
     error StreamAmountExceedsUint128(uint256 amount);
     error HoldingPeriodExceedsMaximum(uint256 holdingPeriod, uint256 maximum);
+    error ZeroInterest();
 
     event KeeperExecuted(
         uint256 indexed timestamp,
@@ -53,7 +53,8 @@ interface IStrategyKeeper {
         uint256 holdingPeriod,
         uint256 principal,
         uint256 fee,
-        uint256 streamAmount
+        uint256 streamAmount,
+        uint256 streamId
     );
     event ConfigUpdated(
         address indexed vault, address indexed safe, uint256 apr, uint256 holdingPeriod, uint256 feeFraction
@@ -65,7 +66,6 @@ interface IStrategyKeeper {
 ///         and disburses funds from the Safe with yield holdback via Sablier streams.
 /// @dev Deployed directly (no proxy). Must be registered as a module on the Gnosis Safe.
 contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyGuard, Pausable {
-    using SafeERC20 for IERC20;
 
     /// @notice Role required to call the keeper function (on-chain computed parameters)
     bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
@@ -192,6 +192,7 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
         // Calculate yield holdback
         // interest = available * apr * holdingPeriod / SECONDS_PER_YEAR / PRECISION
         uint256 interest = (available * cfg.apr * cfg.holdingPeriod) / SECONDS_PER_YEAR / PRECISION;
+        if (interest == 0) revert ZeroInterest();
         uint256 principal = available - interest;
 
         // Calculate fee split: 1/feeFraction to fee wallet, (feeFraction-1)/feeFraction to stream
@@ -202,27 +203,47 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
         // Transfer principal to borrower
         _executeSafeTransfer(cfg, cfg.borrower, principal);
 
-        // Transfer fee to fee wallet
-        _executeSafeTransfer(cfg, cfg.feeWallet, fee);
+        // Transfer fee to fee wallet (skip if zero to avoid wasteful zero-amount transfer)
+        if (fee > 0) {
+            _executeSafeTransfer(cfg, cfg.feeWallet, fee);
+        }
 
         // Create Sablier stream for remaining interest
-        _createSablierStream(cfg, streamAmount);
+        uint256 streamId = _createSablierStream(cfg, streamAmount);
 
         // Record last processed timestamp
         _lastProcessedTimestamp = block.timestamp;
 
+        _emitKeeperExecuted(vaultAllocation, safeBalance, cfg.minResidual, available, interest, cfg.apr, cfg.holdingPeriod, principal, fee, streamAmount, streamId);
+    }
+
+    /// @notice Emit the KeeperExecuted event (extracted to avoid stack-too-deep)
+    function _emitKeeperExecuted(
+        uint256 vaultAllocation,
+        uint256 safeBalance,
+        uint256 minResidual,
+        uint256 available,
+        uint256 interest,
+        uint256 apr,
+        uint256 holdingPeriod,
+        uint256 principal,
+        uint256 fee,
+        uint256 streamAmount,
+        uint256 streamId
+    ) internal {
         emit KeeperExecuted(
             block.timestamp,
             vaultAllocation,
             safeBalance,
-            cfg.minResidual,
+            minResidual,
             available,
             interest,
-            cfg.apr,
-            cfg.holdingPeriod,
+            apr,
+            holdingPeriod,
             principal,
             fee,
-            streamAmount
+            streamAmount,
+            streamId
         );
     }
 
@@ -305,7 +326,8 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
     /// @notice Create a Sablier stream from the Safe
     /// @param cfg Keeper configuration
     /// @param amount Amount to stream
-    function _createSablierStream(KeeperConfig memory cfg, uint256 amount) internal {
+    /// @return streamId The Sablier stream ID
+    function _createSablierStream(KeeperConfig memory cfg, uint256 amount) internal returns (uint256 streamId) {
         // Validate amount fits in uint128 (Sablier requirement)
         if (amount > type(uint128).max) revert StreamAmountExceedsUint128(amount);
 
@@ -331,10 +353,11 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
         ISablierLockupLinear.UnlockAmounts memory unlockAmounts =
             ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0});
 
-        // Create stream via Safe
+        // Create stream via Safe and capture the stream ID
         bytes memory createData =
             abi.encodeCall(ISablierLockupLinear.createWithTimestampsLL, (params, unlockAmounts, 0));
-        _executeSafeTransaction(cfg, cfg.sablier, 0, createData);
+        bytes memory returnData = _executeSafeTransactionReturnData(cfg, cfg.sablier, 0, createData);
+        streamId = abi.decode(returnData, (uint256));
     }
 
     /// @notice Execute a transaction from the Gnosis Safe as a module
@@ -348,6 +371,27 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
 
         // Execute transaction as module
         bool success = safe.execTransactionFromModule(to, value, data, IGnosisSafe.Operation.Call);
+
+        if (!success) revert SafeExecutionFailed();
+    }
+
+    /// @notice Execute a transaction from the Gnosis Safe as a module and return data
+    /// @dev The keeper must be registered as a module on the Safe
+    /// @param cfg Keeper configuration
+    /// @param to Target address
+    /// @param value ETH value
+    /// @param data Call data
+    /// @return returnData Data returned from the call
+    function _executeSafeTransactionReturnData(
+        KeeperConfig memory cfg,
+        address to,
+        uint256 value,
+        bytes memory data
+    ) internal returns (bytes memory returnData) {
+        IGnosisSafe safe = IGnosisSafe(cfg.safe);
+
+        bool success;
+        (success, returnData) = safe.execTransactionFromModuleReturnData(to, value, data, IGnosisSafe.Operation.Call);
 
         if (!success) revert SafeExecutionFailed();
     }
