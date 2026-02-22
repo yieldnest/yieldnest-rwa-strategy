@@ -1,0 +1,11 @@
+{
+  "contractName": "StrategyKeeperSablierValidator",
+  "version": "0.2.0",
+  "address": "0xb79acdcc1eb0b9253d94ea7723319890bf456d57",
+  "safe": "0xb34E69c23Df216334496DFFd455618249E6bbFa9",
+  "lockup": "0xcF8ce57fa442ba50aCbC57147a62aD03873FfA73",
+  "token": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+  "allowedRecipients": [
+    "0xbAC19FD66262629eEA13F1fd36ba9ae654bDfc76"
+  ]
+}
