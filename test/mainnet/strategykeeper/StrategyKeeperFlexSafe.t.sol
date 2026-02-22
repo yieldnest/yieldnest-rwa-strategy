@@ -370,7 +370,7 @@ contract StrategyKeeperFlexSafeTest is Test {
         uint256 fee = interest / cfg.feeFraction;
         uint256 streamAmount = interest - fee;
 
-        vm.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, false);
         emit IStrategyKeeper.KeeperExecuted(
             block.timestamp,
             0,
@@ -382,7 +382,8 @@ contract StrategyKeeperFlexSafeTest is Test {
             cfg.holdingPeriod,
             principal,
             fee,
-            streamAmount
+            streamAmount,
+            0
         );
 
         vm.prank(powerKeeperBot);
