@@ -2,8 +2,6 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {TransparentUpgradeableProxy} from
-    "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 import {IAccessControl} from "lib/openzeppelin-contracts/contracts/access/IAccessControl.sol";
@@ -49,7 +47,6 @@ contract StrategyKeeperFlexSafeTest is Test {
 
     // Contracts
     StrategyKeeper public keeper;
-    StrategyKeeper public keeperImpl;
 
     // Real Safe obtained from the FlexStrategy's accountingModule
     address public realSafe;
@@ -67,35 +64,26 @@ contract StrategyKeeperFlexSafeTest is Test {
         accountingModule = flexStrategy.accountingModule();
         realSafe = accountingModule.safe();
 
-        // Deploy keeper implementation
-        keeperImpl = new StrategyKeeper();
-
-        // Deploy proxy with the real safe address
-        bytes memory initData = abi.encodeCall(
-            StrategyKeeper.initialize,
-            (
-                admin,
-                IStrategyKeeper.KeeperConfig({
-                    vault: MainnetKeeperContracts.YNRWAX,
-                    targetStrategy: MainnetKeeperContracts.FLEX_STRATEGY,
-                    safe: realSafe,
-                    baseAsset: MainnetKeeperContracts.USDC,
-                    borrower: MainnetKeeperContracts.BORROWER,
-                    feeWallet: MainnetKeeperContracts.FEE_WALLET,
-                    streamReceiver: streamReceiver,
-                    sablier: MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR,
-                    minThreshold: 10_000e6,
-                    minResidual: 1_000e6,
-                    apr: 0.121e18,
-                    holdingPeriod: 28 days,
-                    minProcessingPercent: 0.01e18,
-                    feeFraction: 11
-                })
-            )
+        // Deploy keeper directly (no proxy)
+        keeper = new StrategyKeeper(admin, address(this));
+        keeper.initialize(
+            IStrategyKeeper.KeeperConfig({
+                vault: MainnetKeeperContracts.YNRWAX,
+                targetStrategy: MainnetKeeperContracts.FLEX_STRATEGY,
+                safe: realSafe,
+                baseAsset: MainnetKeeperContracts.USDC,
+                borrower: MainnetKeeperContracts.BORROWER,
+                feeWallet: MainnetKeeperContracts.FEE_WALLET,
+                streamReceiver: streamReceiver,
+                sablier: MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR,
+                minThreshold: 10_000e6,
+                minResidual: 1_000e6,
+                apr: 0.121e18,
+                holdingPeriod: 28 days,
+                minProcessingPercent: 0.01e18,
+                feeFraction: 11
+            })
         );
-
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(keeperImpl), admin, initData);
-        keeper = StrategyKeeper(address(proxy));
 
         // Enable keeper as a module on the REAL Safe.
         // The Safe's enableModule is `authorized` (requires msg.sender == address(this)),
@@ -485,31 +473,25 @@ contract StrategyKeeperFlexSafeTest is Test {
 
     function test_nonModuleCannotExecuteOnRealSafe() public {
         // Deploy a second keeper that is NOT enabled as a module
-        StrategyKeeper keeperImpl2 = new StrategyKeeper();
-        bytes memory initData = abi.encodeCall(
-            StrategyKeeper.initialize,
-            (
-                admin,
-                IStrategyKeeper.KeeperConfig({
-                    vault: MainnetKeeperContracts.YNRWAX,
-                    targetStrategy: MainnetKeeperContracts.FLEX_STRATEGY,
-                    safe: realSafe,
-                    baseAsset: MainnetKeeperContracts.USDC,
-                    borrower: MainnetKeeperContracts.BORROWER,
-                    feeWallet: MainnetKeeperContracts.FEE_WALLET,
-                    streamReceiver: streamReceiver,
-                    sablier: MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR,
-                    minThreshold: 10_000e6,
-                    minResidual: 1_000e6,
-                    apr: 0.121e18,
-                    holdingPeriod: 28 days,
-                    minProcessingPercent: 0.01e18,
-                    feeFraction: 11
-                })
-            )
+        StrategyKeeper unauthorizedKeeper = new StrategyKeeper(admin, address(this));
+        unauthorizedKeeper.initialize(
+            IStrategyKeeper.KeeperConfig({
+                vault: MainnetKeeperContracts.YNRWAX,
+                targetStrategy: MainnetKeeperContracts.FLEX_STRATEGY,
+                safe: realSafe,
+                baseAsset: MainnetKeeperContracts.USDC,
+                borrower: MainnetKeeperContracts.BORROWER,
+                feeWallet: MainnetKeeperContracts.FEE_WALLET,
+                streamReceiver: streamReceiver,
+                sablier: MainnetKeeperContracts.SABLIER_LOCKUP_LINEAR,
+                minThreshold: 10_000e6,
+                minResidual: 1_000e6,
+                apr: 0.121e18,
+                holdingPeriod: 28 days,
+                minProcessingPercent: 0.01e18,
+                feeFraction: 11
+            })
         );
-        TransparentUpgradeableProxy proxy2 = new TransparentUpgradeableProxy(address(keeperImpl2), admin, initData);
-        StrategyKeeper unauthorizedKeeper = StrategyKeeper(address(proxy2));
 
         // Grant power keeper role (use startPrank to avoid prank being consumed by nested call)
         vm.startPrank(admin);

@@ -2,14 +2,12 @@
 pragma solidity ^0.8.28;
 
 import {Script, console} from "forge-std/Script.sol";
-import {TransparentUpgradeableProxy} from
-    "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {StrategyKeeper, IStrategyKeeper} from "src/StrategyKeeper.sol";
 import {MainnetStrategyActors} from "@script/Actors.sol";
 import {MainnetKeeperContracts} from "@script/Contracts.sol";
 
 /// @title DeployKeeper
-/// @notice Deployment script for StrategyKeeper (module-based execution)
+/// @notice Deployment script for StrategyKeeper (immutable, no proxy)
 contract DeployKeeper is Script {
     // Deployment parameters (customize these before deployment)
     uint256 public minThreshold = 200_000e6; // 200,000 USDC minimum to trigger allocation
@@ -19,7 +17,6 @@ contract DeployKeeper is Script {
     uint256 public minProcessingPercent = 0.03e18; // 3%. Eg if vault has 3.5m then 3% is 105k.
     uint256 public feeFraction = 11; // 1/11 to fee wallet, 10/11 to stream
 
-    StrategyKeeper public keeperImplementation;
     StrategyKeeper public keeper;
 
     function run() external {
@@ -47,27 +44,21 @@ contract DeployKeeper is Script {
 
         vm.startBroadcast();
 
-        // 1. Deploy StrategyKeeper implementation
-        keeperImplementation = new StrategyKeeper();
-        console.log("StrategyKeeper implementation:", address(keeperImplementation));
+        // 1. Deploy StrategyKeeper with deployer as both admin and initializer
+        //    (deployer needs admin to grant roles, then transfers admin to real admin)
+        keeper = new StrategyKeeper(deployer, deployer);
+        console.log("StrategyKeeper:", address(keeper));
 
-        // 2. Deploy proxy with deployer as initial admin (so we can transfer roles)
-        bytes memory initData = abi.encodeCall(StrategyKeeper.initialize, (deployer, config));
+        // 2. Initialize with config
+        keeper.initialize(config);
 
-        TransparentUpgradeableProxy proxy =
-            new TransparentUpgradeableProxy(address(keeperImplementation), admin, initData);
-        keeper = StrategyKeeper(address(proxy));
-        console.log("StrategyKeeper proxy:", address(keeper));
-        console.log("Proxy admin:", admin);
-
-        // 3. Transfer roles to admin and renounce deployer roles
+        // 3. Grant roles to real admin
         bytes32 defaultAdminRole = keeper.DEFAULT_ADMIN_ROLE();
         bytes32 configManagerRole = keeper.CONFIG_MANAGER_ROLE();
+        bytes32 pauserRole = keeper.PAUSER_ROLE();
         bytes32 keeperRole = keeper.KEEPER_ROLE();
         bytes32 powerKeeperRole = keeper.POWER_KEEPER_ROLE();
-        bytes32 pauserRole = keeper.PAUSER_ROLE();
 
-        // Grant roles to admin
         keeper.grantRole(defaultAdminRole, admin);
         keeper.grantRole(configManagerRole, admin);
         keeper.grantRole(pauserRole, admin);
@@ -92,8 +83,7 @@ contract DeployKeeper is Script {
 
         console.log("");
         console.log("=== Deployment Summary ===");
-        console.log("StrategyKeeper Implementation:", address(keeperImplementation));
-        console.log("StrategyKeeper Proxy:", address(keeper));
+        console.log("StrategyKeeper:", address(keeper));
         console.log("");
         console.log("=== Configuration ===");
         console.log("Vault (ynRWAx):", config.vault);
@@ -119,9 +109,8 @@ contract DeployKeeper is Script {
     function _saveDeployment(address admin, IStrategyKeeper.KeeperConfig memory config) internal {
         string memory obj = "deployment";
 
-        // Deployed contracts
-        vm.serializeAddress(obj, "keeperImplementation", address(keeperImplementation));
-        vm.serializeAddress(obj, "keeperProxy", address(keeper));
+        // Deployed contract
+        vm.serializeAddress(obj, "keeper", address(keeper));
         vm.serializeAddress(obj, "admin", admin);
 
         // Configuration addresses
