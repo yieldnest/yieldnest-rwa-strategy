@@ -2,8 +2,6 @@
 pragma solidity ^0.8.28;
 
 import {Test, console} from "forge-std/Test.sol";
-import {TransparentUpgradeableProxy} from
-    "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {Safe} from "lib/safe-smart-account/contracts/Safe.sol";
 import {SafeProxyFactory} from "lib/safe-smart-account/contracts/proxies/SafeProxyFactory.sol";
@@ -63,7 +61,6 @@ contract StrategyKeeperMainnetTest is Test {
 
     // Contracts
     StrategyKeeper public keeper;
-    StrategyKeeper public keeperImpl;
     Safe public safe;
 
     function setUp() public {
@@ -73,42 +70,13 @@ contract StrategyKeeperMainnetTest is Test {
         streamReceiver = makeAddr("streamReceiver");
         eoaOwner = vm.addr(eoaOwnerPk);
 
-        // Deploy keeper implementation
-        keeperImpl = new StrategyKeeper();
-
-        // Deploy proxy with placeholder safe
-        bytes memory initData = abi.encodeCall(
-            StrategyKeeper.initialize,
-            (
-                admin,
-                IStrategyKeeper.KeeperConfig({
-                    vault: VAULT,
-                    targetStrategy: TARGET_STRATEGY,
-                    safe: address(1), // placeholder
-                    baseAsset: USDC,
-                    borrower: BORROWER,
-                    feeWallet: FEE_WALLET,
-                    streamReceiver: streamReceiver,
-                    sablier: SABLIER,
-                    minThreshold: 10_000e6,
-                    minResidual: 1_000e6,
-                    apr: 0.121e18,
-                    holdingPeriod: 28 days,
-                    minProcessingPercent: 0.01e18, // 1%
-                    feeFraction: 11
-                })
-            )
-        );
-
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(keeperImpl), admin, initData);
-        keeper = StrategyKeeper(address(proxy));
-
-        // Deploy Safe with keeper as module
+        // Deploy Safe first (keeper address not yet known, will enable module after)
         safe = _deploySafe();
 
-        // Update keeper config with real addresses
-        vm.startPrank(admin);
-        keeper.setConfig(
+        // Deploy keeper: admin gets admin roles, address(this) is initializer,
+        // admin is pauser, keeperBot is processor (gets both keeper roles)
+        keeper = new StrategyKeeper(admin, address(this), admin, keeperBot);
+        keeper.initialize(
             IStrategyKeeper.KeeperConfig({
                 vault: VAULT,
                 targetStrategy: TARGET_STRATEGY,
@@ -126,8 +94,14 @@ contract StrategyKeeperMainnetTest is Test {
                 feeFraction: 11
             })
         );
-        keeper.grantRole(keeper.KEEPER_ROLE(), keeperBot);
+
+        // Enable keeper as a module on the Safe
+        _enableModuleOnSafe(address(keeper));
+
+        // For testing: separate KEEPER_ROLE and POWER_KEEPER_ROLE onto different addresses
+        vm.startPrank(admin);
         keeper.grantRole(keeper.POWER_KEEPER_ROLE(), powerKeeperBot);
+        keeper.revokeRole(keeper.POWER_KEEPER_ROLE(), keeperBot);
         vm.stopPrank();
 
         // Fund safe with USDC from whale
@@ -160,24 +134,21 @@ contract StrategyKeeperMainnetTest is Test {
 
         SafeProxyFactory factory = SafeProxyFactory(SAFE_PROXY_FACTORY);
         SafeProxy safeProxy = factory.createProxyWithNonce(SAFE_SINGLETON, setupData, block.timestamp);
-        Safe _safe = Safe(payable(address(safeProxy)));
+        return Safe(payable(address(safeProxy)));
+    }
 
-        // Enable keeper as a module on the Safe
-        bytes memory enableModuleData = abi.encodeWithSignature("enableModule(address)", address(keeper));
-        bytes32 txHash = _safe.getTransactionHash(
-            address(_safe), 0, enableModuleData, Enum.Operation.Call, 0, 0, 0, address(0), address(0), _safe.nonce()
+    function _enableModuleOnSafe(address module) internal {
+        bytes memory enableModuleData = abi.encodeWithSignature("enableModule(address)", module);
+        bytes32 txHash = safe.getTransactionHash(
+            address(safe), 0, enableModuleData, Enum.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
         );
 
-        // Sign the transaction with EOA owner
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(eoaOwnerPk, txHash);
         bytes memory signature = abi.encodePacked(r, s, v);
 
-        // Execute enableModule transaction
-        _safe.execTransaction(
-            address(_safe), 0, enableModuleData, Enum.Operation.Call, 0, 0, 0, address(0), payable(0), signature
+        safe.execTransaction(
+            address(safe), 0, enableModuleData, Enum.Operation.Call, 0, 0, 0, address(0), payable(0), signature
         );
-
-        return _safe;
     }
 
     function test_initialization() public view {

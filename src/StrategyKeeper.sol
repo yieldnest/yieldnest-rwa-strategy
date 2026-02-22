@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: BSD-3-Clause
 pragma solidity ^0.8.28;
 
-import {Initializable} from "lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/Initializable.sol";
-import {AccessControlEnumerableUpgradeable} from
-    "lib/openzeppelin-contracts-upgradeable/contracts/access/extensions/AccessControlEnumerableUpgradeable.sol";
-import {ReentrancyGuardUpgradeable} from
-    "lib/openzeppelin-contracts-upgradeable/contracts/utils/ReentrancyGuardUpgradeable.sol";
-import {PausableUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/utils/PausableUpgradeable.sol";
+import {AccessControlEnumerable} from
+    "lib/openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol";
+import {ReentrancyGuard} from "lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
+import {Pausable} from "lib/openzeppelin-contracts/contracts/utils/Pausable.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 import {SafeERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -63,17 +61,10 @@ interface IStrategyKeeper {
 }
 
 /// @title StrategyKeeper
-/// @notice Upgradeable keeper contract that monitors vault balances, allocates to strategy,
+/// @notice Immutable keeper contract that monitors vault balances, allocates to strategy,
 ///         and disburses funds from the Safe with yield holdback via Sablier streams.
-/// @dev Uses TransparentUpgradeableProxy pattern. Requires PROCESSOR_ROLE on the vault.
-///      Must be registered as a module on the Gnosis Safe to execute transactions.
-contract StrategyKeeper is
-    IStrategyKeeper,
-    Initializable,
-    AccessControlEnumerableUpgradeable,
-    ReentrancyGuardUpgradeable,
-    PausableUpgradeable
-{
+/// @dev Deployed directly (no proxy). Must be registered as a module on the Gnosis Safe.
+contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
     /// @notice Role required to call the keeper function (on-chain computed parameters)
@@ -88,6 +79,9 @@ contract StrategyKeeper is
     /// @notice Role required to pause/unpause the contract
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
+    /// @notice Role granted to the initializer (deployer) to call initialize() once
+    bytes32 public constant INITIALIZER_ROLE = keccak256("INITIALIZER_ROLE");
+
     /// @notice Precision for percentage calculations (1e18 = 100%)
     uint256 public constant PRECISION = 1e18;
 
@@ -100,53 +94,50 @@ contract StrategyKeeper is
     /// @notice Maximum holding period (1 year in seconds)
     uint256 public constant MAX_HOLDING_PERIOD = 365 days;
 
-    /// @notice Storage slot for keeper data
-    bytes32 private constant KEEPER_STORAGE_SLOT = keccak256("yieldnest.storage.strategyKeeper");
+    /// @notice Keeper configuration
+    KeeperConfig private _config;
 
-    /// @notice Storage struct for the keeper
-    struct KeeperStorage {
-        KeeperConfig config;
-        uint256 lastProcessedTimestamp;
+    /// @notice Timestamp of last processing
+    uint256 private _lastProcessedTimestamp;
+
+    /// @notice Creates a new StrategyKeeper
+    /// @param _admin Admin address that receives DEFAULT_ADMIN_ROLE, CONFIG_MANAGER_ROLE, and PAUSER_ROLE
+    /// @param _initializer Address that can call initialize() once to set the config
+    /// @param _pauser Additional address that receives PAUSER_ROLE (e.g. YnDev)
+    /// @param _processor Address that receives KEEPER_ROLE and POWER_KEEPER_ROLE
+    constructor(address _admin, address _initializer, address _pauser, address _processor) {
+        if (_admin == address(0)) revert ZeroAddress();
+        if (_initializer == address(0)) revert ZeroAddress();
+        if (_pauser == address(0)) revert ZeroAddress();
+        if (_processor == address(0)) revert ZeroAddress();
+
+        _grantRole(DEFAULT_ADMIN_ROLE, _admin);
+        _grantRole(CONFIG_MANAGER_ROLE, _admin);
+        _grantRole(PAUSER_ROLE, _admin);
+
+        _grantRole(INITIALIZER_ROLE, _initializer);
+
+        _grantRole(PAUSER_ROLE, _pauser);
+
+        _grantRole(KEEPER_ROLE, _processor);
+        _grantRole(POWER_KEEPER_ROLE, _processor);
     }
 
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
-    }
-
-    /// @notice Get the storage struct
-    function _getKeeperStorage() internal pure returns (KeeperStorage storage s) {
-        bytes32 slot = KEEPER_STORAGE_SLOT;
-        assembly {
-            s.slot := slot
-        }
-    }
-
-    /// @notice Initialize the keeper contract
-    /// @param admin Admin address with DEFAULT_ADMIN_ROLE
+    /// @notice Initialize the keeper with configuration
+    /// @dev Can only be called once by the INITIALIZER_ROLE holder. The role is revoked after.
     /// @param config_ Initial keeper configuration
-    function initialize(address admin, KeeperConfig calldata config_) external initializer {
-        if (admin == address(0)) revert ZeroAddress();
-
-        __AccessControlEnumerable_init();
-        __ReentrancyGuard_init();
-        __Pausable_init();
-
-        _grantRole(DEFAULT_ADMIN_ROLE, admin);
-        _grantRole(CONFIG_MANAGER_ROLE, admin);
-        _grantRole(PAUSER_ROLE, admin);
-
+    function initialize(KeeperConfig calldata config_) external onlyRole(INITIALIZER_ROLE) {
+        _revokeRole(INITIALIZER_ROLE, msg.sender);
         _setConfig(config_);
     }
 
     /// @notice Execute the keeper logic to process inflows (on-chain computed parameters)
     /// @dev Requires KEEPER_ROLE. Computes vaultAllocation and available from on-chain state.
     function processInflows() external onlyRole(KEEPER_ROLE) nonReentrant whenNotPaused {
-        KeeperStorage storage s = _getKeeperStorage();
-        KeeperConfig memory cfg = s.config;
+        KeeperConfig memory cfg = _config;
 
         // 1. Check if processing should occur and get vault allocation amount
-        (bool shouldExecute, uint256 vaultAllocation) = _shouldProcess(s, cfg);
+        (bool shouldExecute, uint256 vaultAllocation) = _shouldProcess(cfg);
         if (!shouldExecute) revert NoFundsToProcess();
 
         // 2. Allocate vault funds if needed (sends funds to safe via strategy)
@@ -174,7 +165,7 @@ contract StrategyKeeper is
     {
         if (available == 0) revert NoFundsToProcess();
 
-        KeeperConfig memory cfg = _getKeeperStorage().config;
+        KeeperConfig memory cfg = _config;
 
         // Allocate vault funds if needed
         if (vaultAllocation > 0) {
@@ -218,7 +209,7 @@ contract StrategyKeeper is
         _createSablierStream(cfg, streamAmount);
 
         // Record last processed timestamp
-        _getKeeperStorage().lastProcessedTimestamp = block.timestamp;
+        _lastProcessedTimestamp = block.timestamp;
 
         emit KeeperExecuted(
             block.timestamp,
@@ -241,18 +232,15 @@ contract StrategyKeeper is
     ///      2. 24h passed since last processing AND safe balance >= minProcessingPercent of vault total assets
     /// @return shouldExecute True if processInflows() should be called
     function shouldProcess() external view returns (bool shouldExecute) {
-        KeeperStorage storage s = _getKeeperStorage();
-        KeeperConfig memory cfg = s.config;
-        (shouldExecute,) = _shouldProcess(s, cfg);
+        (shouldExecute,) = _shouldProcess(_config);
     }
 
     /// @notice Internal check for processing conditions
     /// @dev Checks if vault needs allocation OR if time-based fallback triggers
-    /// @param s Storage reference
     /// @param cfg Keeper configuration
     /// @return shouldExecute True if processing should occur
     /// @return vaultAllocation Amount to allocate from vault (0 if none)
-    function _shouldProcess(KeeperStorage storage s, KeeperConfig memory cfg)
+    function _shouldProcess(KeeperConfig memory cfg)
         internal
         view
         returns (bool shouldExecute, uint256 vaultAllocation)
@@ -265,7 +253,7 @@ contract StrategyKeeper is
 
         // Condition 2: Time-based fallback with percentage check
         // If 24 hours have passed since the last processing AND the vault balance is at least minProcessingPercent of total assets
-        if (block.timestamp >= s.lastProcessedTimestamp + FALLBACK_INTERVAL) {
+        if (block.timestamp >= _lastProcessedTimestamp + FALLBACK_INTERVAL) {
             uint256 vaultTotalAssets = IERC4626(cfg.vault).totalAssets();
             uint256 minAmount = (vaultTotalAssets * cfg.minProcessingPercent) / PRECISION;
             if (vaultBalance >= minAmount) {
@@ -279,7 +267,7 @@ contract StrategyKeeper is
     /// @notice Get the last processed timestamp
     /// @return timestamp Unix timestamp of last processing
     function lastProcessedTimestamp() external view returns (uint256 timestamp) {
-        return _getKeeperStorage().lastProcessedTimestamp;
+        return _lastProcessedTimestamp;
     }
 
     /// @notice Allocate funds from vault to strategy via processor
@@ -389,14 +377,14 @@ contract StrategyKeeper is
         if (config_.minProcessingPercent > PRECISION) revert InvalidConfiguration();
         if (config_.feeFraction < 2) revert InvalidConfiguration();
 
-        _getKeeperStorage().config = config_;
+        _config = config_;
         emit ConfigUpdated(config_.vault, config_.safe, config_.apr, config_.holdingPeriod, config_.feeFraction);
     }
 
     /// @notice Get the current configuration
     /// @return config The current keeper configuration
     function getConfig() external view returns (KeeperConfig memory config) {
-        return _getKeeperStorage().config;
+        return _config;
     }
 
     /// @notice Pause the keeper

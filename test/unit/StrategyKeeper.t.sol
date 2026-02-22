@@ -2,13 +2,10 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {TransparentUpgradeableProxy} from
-    "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {StrategyKeeper, IStrategyKeeper} from "src/StrategyKeeper.sol";
 
 contract StrategyKeeperTest is Test {
     StrategyKeeper public keeper;
-    StrategyKeeper public keeperImpl;
 
     address public admin = address(0x1);
     address public keeperBot = address(0x2);
@@ -26,41 +23,36 @@ contract StrategyKeeperTest is Test {
     uint256 constant TWENTY_EIGHT_DAYS = 28 days;
 
     function setUp() public {
-        // Deploy implementation
-        keeperImpl = new StrategyKeeper();
+        // Deploy keeper: address(this) is admin+initializer, admin is pauser, keeperBot is processor
+        keeper = new StrategyKeeper(address(this), address(this), admin, keeperBot);
 
-        // Deploy proxy - use this contract (the test) as the initial deployer so we can grant roles
-        bytes memory initData = abi.encodeCall(
-            StrategyKeeper.initialize,
-            (
-                address(this), // Use test contract as initial admin
-                IStrategyKeeper.KeeperConfig({
-                    vault: vault,
-                    targetStrategy: targetStrategy,
-                    safe: safe,
-                    baseAsset: baseAsset,
-                    borrower: borrower,
-                    feeWallet: feeWallet,
-                    streamReceiver: streamReceiver,
-                    sablier: sablier,
-                    minThreshold: 10_000e6,
-                    minResidual: 1_000e6,
-                    apr: 0.121e18,
-                    holdingPeriod: TWENTY_EIGHT_DAYS,
-                    minProcessingPercent: 0.01e18,
-                    feeFraction: 11
-                })
-            )
+        // Initialize with config (revokes INITIALIZER_ROLE)
+        keeper.initialize(
+            IStrategyKeeper.KeeperConfig({
+                vault: vault,
+                targetStrategy: targetStrategy,
+                safe: safe,
+                baseAsset: baseAsset,
+                borrower: borrower,
+                feeWallet: feeWallet,
+                streamReceiver: streamReceiver,
+                sablier: sablier,
+                minThreshold: 10_000e6,
+                minResidual: 1_000e6,
+                apr: 0.121e18,
+                holdingPeriod: TWENTY_EIGHT_DAYS,
+                minProcessingPercent: 0.01e18,
+                feeFraction: 11
+            })
         );
 
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(keeperImpl), admin, initData);
-        keeper = StrategyKeeper(address(proxy));
+        // For testing: separate KEEPER_ROLE and POWER_KEEPER_ROLE onto different addresses
+        keeper.grantRole(keeper.POWER_KEEPER_ROLE(), powerKeeperBot);
+        keeper.revokeRole(keeper.POWER_KEEPER_ROLE(), keeperBot);
 
-        // Grant roles to admin and keeper bot
+        // Transfer admin roles to test admin
         keeper.grantRole(keeper.DEFAULT_ADMIN_ROLE(), admin);
         keeper.grantRole(keeper.CONFIG_MANAGER_ROLE(), admin);
-        keeper.grantRole(keeper.KEEPER_ROLE(), keeperBot);
-        keeper.grantRole(keeper.POWER_KEEPER_ROLE(), powerKeeperBot);
         keeper.grantRole(keeper.PAUSER_ROLE(), admin);
 
         // Renounce the test contract's roles
@@ -95,6 +87,50 @@ contract StrategyKeeperTest is Test {
 
     function test_powerKeeperRoleConstant() public view {
         assertEq(keeper.POWER_KEEPER_ROLE(), keccak256("POWER_KEEPER_ROLE"));
+    }
+
+    function test_initializeCannotBeCalledTwice() public {
+        // Deploy a fresh keeper
+        StrategyKeeper k = new StrategyKeeper(address(this), address(this), admin, keeperBot);
+        k.initialize(
+            IStrategyKeeper.KeeperConfig({
+                vault: vault,
+                targetStrategy: targetStrategy,
+                safe: safe,
+                baseAsset: baseAsset,
+                borrower: borrower,
+                feeWallet: feeWallet,
+                streamReceiver: streamReceiver,
+                sablier: sablier,
+                minThreshold: 10_000e6,
+                minResidual: 1_000e6,
+                apr: 0.121e18,
+                holdingPeriod: TWENTY_EIGHT_DAYS,
+                minProcessingPercent: 0.01e18,
+                feeFraction: 11
+            })
+        );
+
+        // Second call should revert (INITIALIZER_ROLE was revoked)
+        vm.expectRevert();
+        k.initialize(
+            IStrategyKeeper.KeeperConfig({
+                vault: vault,
+                targetStrategy: targetStrategy,
+                safe: safe,
+                baseAsset: baseAsset,
+                borrower: borrower,
+                feeWallet: feeWallet,
+                streamReceiver: streamReceiver,
+                sablier: sablier,
+                minThreshold: 10_000e6,
+                minResidual: 1_000e6,
+                apr: 0.121e18,
+                holdingPeriod: TWENTY_EIGHT_DAYS,
+                minProcessingPercent: 0.01e18,
+                feeFraction: 11
+            })
+        );
     }
 
     function test_revertOnUnauthorizedKeeper() public {

@@ -2,8 +2,6 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {TransparentUpgradeableProxy} from
-    "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {Safe} from "lib/safe-smart-account/contracts/Safe.sol";
 import {SafeProxyFactory} from "lib/safe-smart-account/contracts/proxies/SafeProxyFactory.sol";
@@ -61,7 +59,6 @@ contract StrategyKeeperSafeTest is Test {
     Safe public safeSingleton;
     SafeProxyFactory public safeFactory;
     StrategyKeeper public keeper;
-    StrategyKeeper public keeperImpl;
 
     address public admin = address(0x1111);
     address public keeperBot = address(0x2222);
@@ -82,36 +79,6 @@ contract StrategyKeeperSafeTest is Test {
         // Deploy mock USDC
         usdc = new MockERC20();
 
-        // Deploy keeper implementation
-        keeperImpl = new StrategyKeeper();
-
-        // Deploy keeper proxy with placeholder safe address
-        bytes memory initData = abi.encodeCall(
-            StrategyKeeper.initialize,
-            (
-                admin,
-                IStrategyKeeper.KeeperConfig({
-                    vault: vault,
-                    targetStrategy: targetStrategy,
-                    safe: address(1), // Placeholder, will update
-                    baseAsset: address(usdc),
-                    borrower: borrower,
-                    feeWallet: feeWallet,
-                    streamReceiver: streamReceiver,
-                    sablier: sablier,
-                    minThreshold: 10_000e6,
-                    minResidual: 1_000e6,
-                    apr: 0.121e18,
-                    holdingPeriod: 28 days,
-                    minProcessingPercent: 0.01e18,
-                    feeFraction: 11
-                })
-            )
-        );
-
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(keeperImpl), admin, initData);
-        keeper = StrategyKeeper(address(proxy));
-
         // Deploy Safe singleton and factory
         safeSingleton = new Safe();
         safeFactory = new SafeProxyFactory();
@@ -120,7 +87,6 @@ contract StrategyKeeperSafeTest is Test {
         address[] memory owners = new address[](1);
         owners[0] = eoaOwner;
 
-        // Build Safe setup call
         bytes memory safeSetupData = abi.encodeCall(
             Safe.setup,
             (
@@ -135,29 +101,14 @@ contract StrategyKeeperSafeTest is Test {
             )
         );
 
-        // Deploy Safe proxy using factory
         SafeProxy safeProxy = safeFactory.createProxyWithNonce(address(safeSingleton), safeSetupData, 0);
         safe = Safe(payable(address(safeProxy)));
 
-        // Enable keeper as a module on the Safe
-        // This requires executing a transaction from the Safe to call enableModule
-        bytes memory enableModuleData = abi.encodeWithSignature("enableModule(address)", address(keeper));
-        bytes32 txHash = safe.getTransactionHash(
-            address(safe), 0, enableModuleData, Enum.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
-        );
+        // Deploy keeper: address(this) is admin+initializer, admin is pauser, keeperBot is processor
+        keeper = new StrategyKeeper(address(this), address(this), admin, keeperBot);
 
-        // Sign the transaction with EOA owner
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(eoaOwnerPk, txHash);
-        bytes memory signature = abi.encodePacked(r, s, v);
-
-        // Execute enableModule transaction
-        safe.execTransaction(
-            address(safe), 0, enableModuleData, Enum.Operation.Call, 0, 0, 0, address(0), payable(0), signature
-        );
-
-        // Update keeper config with correct safe address
-        vm.startPrank(admin);
-        keeper.setConfig(
+        // Initialize with config (using the real safe address)
+        keeper.initialize(
             IStrategyKeeper.KeeperConfig({
                 vault: vault,
                 targetStrategy: targetStrategy,
@@ -175,8 +126,29 @@ contract StrategyKeeperSafeTest is Test {
                 feeFraction: 11
             })
         );
-        keeper.grantRole(keeper.KEEPER_ROLE(), keeperBot);
-        vm.stopPrank();
+
+        // Transfer admin roles
+        keeper.grantRole(keeper.DEFAULT_ADMIN_ROLE(), admin);
+        keeper.grantRole(keeper.CONFIG_MANAGER_ROLE(), admin);
+        keeper.grantRole(keeper.PAUSER_ROLE(), admin);
+
+        // Enable keeper as a module on the Safe
+        bytes memory enableModuleData = abi.encodeWithSignature("enableModule(address)", address(keeper));
+        bytes32 txHash = safe.getTransactionHash(
+            address(safe), 0, enableModuleData, Enum.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
+        );
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(eoaOwnerPk, txHash);
+        bytes memory signature = abi.encodePacked(r, s, v);
+
+        safe.execTransaction(
+            address(safe), 0, enableModuleData, Enum.Operation.Call, 0, 0, 0, address(0), payable(0), signature
+        );
+
+        // Renounce test contract's roles
+        keeper.renounceRole(keeper.PAUSER_ROLE(), address(this));
+        keeper.renounceRole(keeper.CONFIG_MANAGER_ROLE(), address(this));
+        keeper.renounceRole(keeper.DEFAULT_ADMIN_ROLE(), address(this));
 
         // Fund the Safe with USDC
         usdc.mint(address(safe), 100_000e6);
