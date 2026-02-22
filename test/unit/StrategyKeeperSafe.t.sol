@@ -104,8 +104,8 @@ contract StrategyKeeperSafeTest is Test {
         SafeProxy safeProxy = safeFactory.createProxyWithNonce(address(safeSingleton), safeSetupData, 0);
         safe = Safe(payable(address(safeProxy)));
 
-        // Deploy keeper with test contract as both admin and initializer
-        keeper = new StrategyKeeper(address(this), address(this));
+        // Deploy keeper: address(this) is admin+initializer, admin is pauser, keeperBot is processor
+        keeper = new StrategyKeeper(address(this), address(this), admin, keeperBot);
 
         // Initialize with config (using the real safe address)
         keeper.initialize(
@@ -127,10 +127,9 @@ contract StrategyKeeperSafeTest is Test {
             })
         );
 
-        // Grant roles
+        // Transfer admin roles
         keeper.grantRole(keeper.DEFAULT_ADMIN_ROLE(), admin);
         keeper.grantRole(keeper.CONFIG_MANAGER_ROLE(), admin);
-        keeper.grantRole(keeper.KEEPER_ROLE(), keeperBot);
         keeper.grantRole(keeper.PAUSER_ROLE(), admin);
 
         // Enable keeper as a module on the Safe

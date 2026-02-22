@@ -23,6 +23,8 @@ contract DeployKeeper is Script {
         MainnetStrategyActors actors = new MainnetStrategyActors();
         address admin = actors.ADMIN();
         address deployer = msg.sender;
+        address pauser = actors.PAUSER();
+        address processor = actors.PROCESSOR();
 
         // Build config
         IStrategyKeeper.KeeperConfig memory config = IStrategyKeeper.KeeperConfig({
@@ -44,37 +46,16 @@ contract DeployKeeper is Script {
 
         vm.startBroadcast();
 
-        // 1. Deploy StrategyKeeper with deployer as both admin and initializer
-        //    (deployer needs admin to grant roles, then transfers admin to real admin)
-        keeper = new StrategyKeeper(deployer, deployer);
+        // 1. Deploy StrategyKeeper — constructor assigns all roles:
+        //    admin  -> DEFAULT_ADMIN_ROLE, CONFIG_MANAGER_ROLE, PAUSER_ROLE
+        //    deployer -> INITIALIZER_ROLE (revoked after initialize)
+        //    pauser -> PAUSER_ROLE
+        //    processor -> KEEPER_ROLE, POWER_KEEPER_ROLE
+        keeper = new StrategyKeeper(admin, deployer, pauser, processor);
         console.log("StrategyKeeper:", address(keeper));
 
-        // 2. Initialize with config
+        // 2. Initialize with config (deployer's INITIALIZER_ROLE is revoked after this call)
         keeper.initialize(config);
-
-        // 3. Grant roles to real admin
-        bytes32 defaultAdminRole = keeper.DEFAULT_ADMIN_ROLE();
-        bytes32 configManagerRole = keeper.CONFIG_MANAGER_ROLE();
-        bytes32 pauserRole = keeper.PAUSER_ROLE();
-        bytes32 keeperRole = keeper.KEEPER_ROLE();
-        bytes32 powerKeeperRole = keeper.POWER_KEEPER_ROLE();
-
-        keeper.grantRole(defaultAdminRole, admin);
-        keeper.grantRole(configManagerRole, admin);
-        keeper.grantRole(pauserRole, admin);
-
-        // Grant pauser role to YnDev
-        keeper.grantRole(pauserRole, actors.PAUSER());
-
-        // Grant keeper roles to processor
-        address processor = actors.PROCESSOR();
-        keeper.grantRole(keeperRole, processor);
-        keeper.grantRole(powerKeeperRole, processor);
-
-        // Renounce deployer roles
-        keeper.renounceRole(pauserRole, deployer);
-        keeper.renounceRole(configManagerRole, deployer);
-        keeper.renounceRole(defaultAdminRole, deployer);
 
         vm.stopBroadcast();
 
@@ -93,10 +74,10 @@ contract DeployKeeper is Script {
         console.log("Stream Receiver (Rewards Sweeper):", config.streamReceiver);
         console.log("Borrower:", config.borrower);
         console.log("");
-        console.log("=== Roles Transferred ===");
+        console.log("=== Roles ===");
         console.log("Admin:", admin);
-        console.log("KEEPER_ROLE & POWER_KEEPER_ROLE granted to Processor:", processor);
-        console.log("Deployer renounced all roles");
+        console.log("Pauser:", pauser);
+        console.log("Processor:", processor);
         console.log("");
         console.log("=== Required Manual Steps ===");
         console.log("1. Enable StrategyKeeper as a module on the Safe:", address(keeper));

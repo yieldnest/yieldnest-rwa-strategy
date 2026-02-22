@@ -73,8 +73,9 @@ contract StrategyKeeperMainnetTest is Test {
         // Deploy Safe first (keeper address not yet known, will enable module after)
         safe = _deploySafe();
 
-        // Deploy keeper with admin and test contract as initializer
-        keeper = new StrategyKeeper(admin, address(this));
+        // Deploy keeper: admin gets admin roles, address(this) is initializer,
+        // admin is pauser, keeperBot is processor (gets both keeper roles)
+        keeper = new StrategyKeeper(admin, address(this), admin, keeperBot);
         keeper.initialize(
             IStrategyKeeper.KeeperConfig({
                 vault: VAULT,
@@ -97,10 +98,10 @@ contract StrategyKeeperMainnetTest is Test {
         // Enable keeper as a module on the Safe
         _enableModuleOnSafe(address(keeper));
 
-        // Grant roles
+        // For testing: separate KEEPER_ROLE and POWER_KEEPER_ROLE onto different addresses
         vm.startPrank(admin);
-        keeper.grantRole(keeper.KEEPER_ROLE(), keeperBot);
         keeper.grantRole(keeper.POWER_KEEPER_ROLE(), powerKeeperBot);
+        keeper.revokeRole(keeper.POWER_KEEPER_ROLE(), keeperBot);
         vm.stopPrank();
 
         // Fund safe with USDC from whale

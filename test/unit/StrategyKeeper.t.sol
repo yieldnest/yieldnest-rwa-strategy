@@ -23,10 +23,10 @@ contract StrategyKeeperTest is Test {
     uint256 constant TWENTY_EIGHT_DAYS = 28 days;
 
     function setUp() public {
-        // Deploy keeper with test contract as both admin and initializer
-        keeper = new StrategyKeeper(address(this), address(this));
+        // Deploy keeper: address(this) is admin+initializer, admin is pauser, keeperBot is processor
+        keeper = new StrategyKeeper(address(this), address(this), admin, keeperBot);
 
-        // Initialize with config
+        // Initialize with config (revokes INITIALIZER_ROLE)
         keeper.initialize(
             IStrategyKeeper.KeeperConfig({
                 vault: vault,
@@ -46,11 +46,13 @@ contract StrategyKeeperTest is Test {
             })
         );
 
-        // Grant roles to admin and keeper bot
+        // For testing: separate KEEPER_ROLE and POWER_KEEPER_ROLE onto different addresses
+        keeper.grantRole(keeper.POWER_KEEPER_ROLE(), powerKeeperBot);
+        keeper.revokeRole(keeper.POWER_KEEPER_ROLE(), keeperBot);
+
+        // Transfer admin roles to test admin
         keeper.grantRole(keeper.DEFAULT_ADMIN_ROLE(), admin);
         keeper.grantRole(keeper.CONFIG_MANAGER_ROLE(), admin);
-        keeper.grantRole(keeper.KEEPER_ROLE(), keeperBot);
-        keeper.grantRole(keeper.POWER_KEEPER_ROLE(), powerKeeperBot);
         keeper.grantRole(keeper.PAUSER_ROLE(), admin);
 
         // Renounce the test contract's roles
@@ -89,7 +91,7 @@ contract StrategyKeeperTest is Test {
 
     function test_initializeCannotBeCalledTwice() public {
         // Deploy a fresh keeper
-        StrategyKeeper k = new StrategyKeeper(address(this), address(this));
+        StrategyKeeper k = new StrategyKeeper(address(this), address(this), admin, keeperBot);
         k.initialize(
             IStrategyKeeper.KeeperConfig({
                 vault: vault,

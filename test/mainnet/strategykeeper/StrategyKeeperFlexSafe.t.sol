@@ -64,8 +64,9 @@ contract StrategyKeeperFlexSafeTest is Test {
         accountingModule = flexStrategy.accountingModule();
         realSafe = accountingModule.safe();
 
-        // Deploy keeper directly (no proxy)
-        keeper = new StrategyKeeper(admin, address(this));
+        // Deploy keeper: admin gets admin roles, address(this) is initializer,
+        // admin is pauser, keeperBot is processor (gets both keeper roles)
+        keeper = new StrategyKeeper(admin, address(this), admin, keeperBot);
         keeper.initialize(
             IStrategyKeeper.KeeperConfig({
                 vault: MainnetKeeperContracts.YNRWAX,
@@ -91,10 +92,10 @@ contract StrategyKeeperFlexSafeTest is Test {
         vm.prank(realSafe);
         IGnosisSafe(realSafe).enableModule(address(keeper));
 
-        // Grant roles
+        // For testing: separate KEEPER_ROLE and POWER_KEEPER_ROLE onto different addresses
         vm.startPrank(admin);
-        keeper.grantRole(keeper.KEEPER_ROLE(), keeperBot);
         keeper.grantRole(keeper.POWER_KEEPER_ROLE(), powerKeeperBot);
+        keeper.revokeRole(keeper.POWER_KEEPER_ROLE(), keeperBot);
         vm.stopPrank();
 
         // Fund the real safe with USDC from whale
@@ -473,7 +474,7 @@ contract StrategyKeeperFlexSafeTest is Test {
 
     function test_nonModuleCannotExecuteOnRealSafe() public {
         // Deploy a second keeper that is NOT enabled as a module
-        StrategyKeeper unauthorizedKeeper = new StrategyKeeper(admin, address(this));
+        StrategyKeeper unauthorizedKeeper = new StrategyKeeper(admin, address(this), admin, powerKeeperBot);
         unauthorizedKeeper.initialize(
             IStrategyKeeper.KeeperConfig({
                 vault: MainnetKeeperContracts.YNRWAX,
@@ -492,11 +493,6 @@ contract StrategyKeeperFlexSafeTest is Test {
                 feeFraction: 11
             })
         );
-
-        // Grant power keeper role (use startPrank to avoid prank being consumed by nested call)
-        vm.startPrank(admin);
-        unauthorizedKeeper.grantRole(unauthorizedKeeper.POWER_KEEPER_ROLE(), powerKeeperBot);
-        vm.stopPrank();
 
         // Verify it is NOT a module
         assertFalse(
