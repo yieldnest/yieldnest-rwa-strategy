@@ -66,7 +66,6 @@ interface IStrategyKeeper {
 ///         and disburses funds from the Safe with yield holdback via Sablier streams.
 /// @dev Deployed directly (no proxy). Must be registered as a module on the Gnosis Safe.
 contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyGuard, Pausable {
-
     /// @notice Role required to call the keeper function (on-chain computed parameters)
     bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
 
@@ -214,7 +213,19 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
         // Record last processed timestamp
         _lastProcessedTimestamp = block.timestamp;
 
-        _emitKeeperExecuted(vaultAllocation, safeBalance, cfg.minResidual, available, interest, cfg.apr, cfg.holdingPeriod, principal, fee, streamAmount, streamId);
+        _emitKeeperExecuted(
+            vaultAllocation,
+            safeBalance,
+            cfg.minResidual,
+            available,
+            interest,
+            cfg.apr,
+            cfg.holdingPeriod,
+            principal,
+            fee,
+            streamAmount,
+            streamId
+        );
     }
 
     /// @notice Emit the KeeperExecuted event (extracted to avoid stack-too-deep)
@@ -382,12 +393,10 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
     /// @param value ETH value
     /// @param data Call data
     /// @return returnData Data returned from the call
-    function _executeSafeTransactionReturnData(
-        KeeperConfig memory cfg,
-        address to,
-        uint256 value,
-        bytes memory data
-    ) internal returns (bytes memory returnData) {
+    function _executeSafeTransactionReturnData(KeeperConfig memory cfg, address to, uint256 value, bytes memory data)
+        internal
+        returns (bytes memory returnData)
+    {
         IGnosisSafe safe = IGnosisSafe(cfg.safe);
 
         bool success;
