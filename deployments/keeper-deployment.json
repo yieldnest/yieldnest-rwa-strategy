@@ -1,0 +1,20 @@
+{
+  "admin": "0xfcad670592a3b24869C0b51a6c6FDED4F95D6975",
+  "apr": 121000000000000000,
+  "baseAsset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+  "borrower": "0xaa7f79Bb105833D655D1C13C175142c44e209912",
+  "chainId": 1,
+  "deploymentTimestamp": 1771820219,
+  "feeFraction": 11,
+  "feeWallet": "0xC92Dd1837EBcb0365eB0a8795f9c8E474f8B6183",
+  "holdingPeriod": 2419200,
+  "keeper": "0x68521bE2613785A0E4710caE32D8F3219f05b6D2",
+  "minProcessingPercent": 30000000000000000,
+  "minResidual": 1000000000,
+  "minThreshold": 200000000000,
+  "sablier": "0xcF8ce57fa442ba50aCbC57147a62aD03873FfA73",
+  "safe": "0xb34E69c23Df216334496DFFd455618249E6bbFa9",
+  "streamReceiver": "0xbAC19FD66262629eEA13F1fd36ba9ae654bDfc76",
+  "targetStrategy": "0xF6e1443e3F70724cec8C0a779C7C35A8DcDA928B",
+  "vault": "0x01Ba69727E2860b37bc1a2bd56999c1aFb4C15D8"
+}
