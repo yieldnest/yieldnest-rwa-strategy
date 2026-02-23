@@ -5,6 +5,7 @@ import {AccessControlEnumerable} from
     "lib/openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol";
 import {ReentrancyGuard} from "lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "lib/openzeppelin-contracts/contracts/utils/Pausable.sol";
+import {Initializable} from "lib/openzeppelin-contracts/contracts/proxy/utils/Initializable.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 
@@ -65,7 +66,7 @@ interface IStrategyKeeper {
 /// @notice Immutable keeper contract that monitors vault balances, allocates to strategy,
 ///         and disburses funds from the Safe with yield holdback via Sablier streams.
 /// @dev Deployed directly (no proxy). Must be registered as a module on the Gnosis Safe.
-contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyGuard, Pausable {
+contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyGuard, Pausable, Initializable {
     /// @notice Role required to call the keeper function (on-chain computed parameters)
     bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
 
@@ -128,7 +129,7 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
     /// @notice Initialize the keeper with configuration
     /// @dev Can only be called once by the INITIALIZER_ROLE holder. The role is revoked after.
     /// @param config_ Initial keeper configuration
-    function initialize(KeeperConfig calldata config_) external onlyRole(INITIALIZER_ROLE) {
+    function initialize(KeeperConfig calldata config_) external onlyRole(INITIALIZER_ROLE) initializer {
         _revokeRole(INITIALIZER_ROLE, msg.sender);
         _setConfig(config_);
     }
