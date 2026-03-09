@@ -40,6 +40,9 @@ library MainnetKeeperContracts {
     /// @notice Sablier BatchLockup contract for batch stream creation
     address public constant SABLIER_BATCH_LOCKUP = 0x0636D83B184D65C242c43de6AAd10535BFb9D45a;
 
+    /// @notice Sablier Flow contract for continuous streaming payments
+    address public constant SABLIER_FLOW = 0x7a86d3e6894f9c5B5f25FFBDAaE658CFc7569623;
+
     // ═══════════════════════════════════════════════════════════════════════════
     // GNOSIS SAFE INFRASTRUCTURE
     // ═══════════════════════════════════════════════════════════════════════════
