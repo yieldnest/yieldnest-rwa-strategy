@@ -105,17 +105,17 @@ contract SablierFlowTest is Test {
         // After 100 seconds, 100 USDC should be withdrawable
         vm.warp(block.timestamp + 100);
         uint128 withdrawable = sablierFlow.withdrawableAmountOf(streamId);
-        assertApproxEqAbs(withdrawable, 100e6, 1e6, "~100 USDC should be withdrawable after 100s");
+        assertEq(withdrawable, 100e6, "100 USDC should be withdrawable after 100s");
 
         // After 1 hour = 3600 seconds, 3600 USDC should be withdrawable
         vm.warp(block.timestamp + 3500); // 100 + 3500 = 3600 total
         withdrawable = sablierFlow.withdrawableAmountOf(streamId);
-        assertApproxEqAbs(withdrawable, 3_600e6, 1e6, "~3600 USDC should be withdrawable after 1 hour");
+        assertEq(withdrawable, 3_600e6, "3600 USDC should be withdrawable after 1 hour");
 
         // After 1 day = 86400 seconds, 86400 USDC should be withdrawable
         vm.warp(block.timestamp + 82800); // 3600 + 82800 = 86400 total
         withdrawable = sablierFlow.withdrawableAmountOf(streamId);
-        assertApproxEqAbs(withdrawable, 86_400e6, 1e6, "~86400 USDC should be withdrawable after 1 day");
+        assertEq(withdrawable, 86_400e6, "86400 USDC should be withdrawable after 1 day");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -138,7 +138,7 @@ contract SablierFlowTest is Test {
         // Warp 1000 seconds, should have streamed ~1 USDC
         vm.warp(block.timestamp + 1000);
         uint128 withdrawable = sablierFlow.withdrawableAmountOf(streamId);
-        assertApproxEqAbs(withdrawable, 1e6, 1e3, "~1 USDC after 1000s at 0.001/s");
+        assertEq(withdrawable, 1e6, "1 USDC after 1000s at 0.001/s");
 
         // Increase rate to 0.01 USDC/sec (10x)
         uint128 newRate = uint128(1e16); // 0.01 * 1e18
@@ -150,7 +150,7 @@ contract SablierFlowTest is Test {
         // Warp 1000 more seconds at new rate: should have ~10 more USDC (plus previous ~1)
         vm.warp(block.timestamp + 1000);
         withdrawable = sablierFlow.withdrawableAmountOf(streamId);
-        assertApproxEqAbs(withdrawable, 11e6, 1e3, "~11 USDC total (1 + 10 at new rate)");
+        assertEq(withdrawable, 11e6, "~11 USDC total (1 + 10 at new rate)");
     }
 
     /// @notice Test decreasing the rate per second
@@ -177,7 +177,7 @@ contract SablierFlowTest is Test {
         // Warp 10000 more seconds at low rate: ~10 more USDC
         vm.warp(block.timestamp + 10000);
         uint128 withdrawable = sablierFlow.withdrawableAmountOf(streamId);
-        assertApproxEqAbs(withdrawable, 20e6, 1e3, "~20 USDC total (10 + 10 at lower rate)");
+        assertEq(withdrawable, 20e6, "20 USDC total (10 + 10 at lower rate)");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -227,7 +227,7 @@ contract SablierFlowTest is Test {
         // Warp 5 days, ~4320 USDC streamed
         vm.warp(block.timestamp + 5 days);
         uint128 withdrawable1 = sablierFlow.withdrawableAmountOf(streamId);
-        assertApproxEqAbs(withdrawable1, 4_320e6, 1e6, "~4320 USDC after 5 days");
+        assertEq(withdrawable1, 4_320e6, "4320 USDC after 5 days");
 
         // Top up with 5,000 USDC
         vm.startPrank(sender);
@@ -238,7 +238,7 @@ contract SablierFlowTest is Test {
         // Warp 5 more days, ~8640 USDC total streamed
         vm.warp(block.timestamp + 5 days);
         uint128 withdrawable2 = sablierFlow.withdrawableAmountOf(streamId);
-        assertApproxEqAbs(withdrawable2, 8_640e6, 1e6, "~8640 USDC after 10 days total");
+        assertEq(withdrawable2, 8_640e6, "8640 USDC after 10 days total");
 
         // Top up with 20,000 USDC
         vm.startPrank(sender);
@@ -249,7 +249,7 @@ contract SablierFlowTest is Test {
         // Warp 10 more days, ~17280 USDC total streamed
         vm.warp(block.timestamp + 10 days);
         uint128 withdrawable3 = sablierFlow.withdrawableAmountOf(streamId);
-        assertApproxEqAbs(withdrawable3, 17_280e6, 1e6, "~17280 USDC after 20 days total");
+        assertEq(withdrawable3, 17_280e6, "17280 USDC after 20 days total");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -271,7 +271,8 @@ contract SablierFlowTest is Test {
 
         // Check depletion time
         uint256 depletionTime = sablierFlow.depletionTimeOf(streamId);
-        assertApproxEqAbs(depletionTime, block.timestamp + 100, 1, "Depletion should be ~100s from now");
+        // +1 because Sablier rounds the depletion timestamp up
+        assertEq(depletionTime, block.timestamp + 100 + 1, "Depletion should be ~100s from now");
 
         // Warp to just before depletion
         vm.warp(block.timestamp + 99);
@@ -323,11 +324,11 @@ contract SablierFlowTest is Test {
         // Now covered debt = min(200, 600) = 200 USDC
         // Withdrawable = 200 - 0 (nothing withdrawn yet) = 200 USDC
         uint128 withdrawable = sablierFlow.withdrawableAmountOf(streamId);
-        assertApproxEqAbs(withdrawable, 200e6, 1e6, "Should be able to withdraw ~200 USDC (all accrued debt)");
+        assertEq(withdrawable, 200e6, "Should be able to withdraw 200 USDC (all accrued debt)");
 
         // Refundable = balance - covered debt = 600 - 200 = 400
         uint128 refundable = sablierFlow.refundableAmountOf(streamId);
-        assertApproxEqAbs(refundable, 400e6, 1e6, "~400 USDC refundable (600 balance - 200 covered debt)");
+        assertEq(refundable, 400e6, "400 USDC refundable (600 balance - 200 covered debt)");
 
         // Stream should no longer be insolvent
         uint256 uncoveredDebtAfter = sablierFlow.uncoveredDebtOf(streamId);
@@ -364,7 +365,7 @@ contract SablierFlowTest is Test {
 
         // Remaining withdrawable should be ~500 USDC
         uint128 remainingWithdrawable = sablierFlow.withdrawableAmountOf(streamId);
-        assertApproxEqAbs(remainingWithdrawable, 500e6, 1e3, "~500 USDC remaining withdrawable");
+        assertEq(remainingWithdrawable, 500e6, "500 USDC remaining withdrawable");
     }
 
     /// @notice Test withdrawMax to drain all available funds
@@ -389,10 +390,8 @@ contract SablierFlowTest is Test {
         vm.prank(recipient);
         uint128 withdrawn = sablierFlow.withdrawMax{value: 0.01 ether}(streamId, recipient);
 
-        assertApproxEqAbs(withdrawn, 500e6, 1e3, "Should withdraw ~500 USDC");
-        assertApproxEqAbs(
-            usdc.balanceOf(recipient), recipientBalanceBefore + 500e6, 1e3, "Recipient balance should increase"
-        );
+        assertEq(withdrawn, 500e6, "Should withdraw 500 USDC");
+        assertEq(usdc.balanceOf(recipient), recipientBalanceBefore + 500e6, "Recipient balance should increase");
 
         // Nothing left to withdraw
         assertEq(sablierFlow.withdrawableAmountOf(streamId), 0, "No more withdrawable");
@@ -419,7 +418,7 @@ contract SablierFlowTest is Test {
         // Stream for 1 day at rate0
         vm.warp(block.timestamp + 1 days);
         uint128 withdrawable = sablierFlow.withdrawableAmountOf(streamId);
-        assertApproxEqAbs(withdrawable, 86_400_000, 1e3, "~86.4 USDC after 1 day at S0");
+        assertEq(withdrawable, 86_400_000, "86.4 USDC after 1 day at S0");
 
         // --- Phase 2: Increase rate (S0 -> S1) ---
         uint128 rate1 = uint128(5e15); // 0.005 USDC/sec = ~432 USDC/day
@@ -430,7 +429,7 @@ contract SablierFlowTest is Test {
         vm.warp(block.timestamp + 1 days);
         withdrawable = sablierFlow.withdrawableAmountOf(streamId);
         // Expected: 86.4 (day 1) + 432 (day 2) = ~518.4 USDC
-        assertApproxEqAbs(withdrawable, 518_400_000, 1e3, "~518.4 USDC total after 2 days");
+        assertEq(withdrawable, 518_400_000, "518.4 USDC total after 2 days");
 
         // --- Phase 3: Top-up 0 ---
         uint128 topUp0 = 10_000e6;
@@ -459,7 +458,7 @@ contract SablierFlowTest is Test {
         vm.prank(recipient);
         uint128 withdrawn = sablierFlow.withdrawMax(streamId, recipient);
         // Total streamed: 86.4 + 432 + (432*2) + 172.8 = 86.4 + 432 + 864 + 172.8 = 1555.2 USDC
-        assertApproxEqAbs(withdrawn, 1_555_200_000, 1e3, "~1555.2 USDC total withdrawn");
+        assertEq(withdrawn, 1_555_200_000, "1555.2 USDC total withdrawn");
 
         // --- Phase 5: Let it deplete ---
         // Remaining balance: 15000 - 1555.2 = 13444.8 USDC
@@ -503,7 +502,7 @@ contract SablierFlowTest is Test {
 
         // Stream for 100 seconds
         vm.warp(block.timestamp + 100);
-        assertApproxEqAbs(sablierFlow.withdrawableAmountOf(streamId), 100e6, 1e3, "100 USDC after 100s");
+        assertEq(sablierFlow.withdrawableAmountOf(streamId), 100e6, "100 USDC after 100s");
 
         // Pause the stream
         vm.prank(sender);
@@ -512,7 +511,7 @@ contract SablierFlowTest is Test {
 
         // Warp 100 more seconds - no additional streaming
         vm.warp(block.timestamp + 100);
-        assertApproxEqAbs(sablierFlow.withdrawableAmountOf(streamId), 100e6, 1e3, "Still 100 USDC (paused)");
+        assertEq(sablierFlow.withdrawableAmountOf(streamId), 100e6, "Still 100 USDC (paused)");
 
         // Restart with a new rate
         uint128 newRate = uint128(2e18); // 2 USDC/sec
@@ -522,7 +521,7 @@ contract SablierFlowTest is Test {
 
         // Stream for 100 more seconds at 2 USDC/sec
         vm.warp(block.timestamp + 100);
-        assertApproxEqAbs(sablierFlow.withdrawableAmountOf(streamId), 300e6, 1e3, "300 USDC total (100 + 200)");
+        assertEq(sablierFlow.withdrawableAmountOf(streamId), 300e6, "300 USDC total (100 + 200)");
     }
 
     /// @notice Test restartAndDeposit combines both operations
