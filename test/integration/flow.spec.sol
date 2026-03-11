@@ -484,6 +484,47 @@ contract SablierFlowTest is Test {
         assertTrue(UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId)) > 0, "Stream should still be active");
     }
 
+    /// @notice Test that rate per second is unchanged after a top-up is fully depleted
+    function test_ratePerSecondUnchangedAfterTopUpDepleted() public {
+        // Rate: 1 USDC/sec, deposit 100 USDC -> depletes after ~100s
+        uint128 ratePerSecond = uint128(1e18);
+        uint128 depositAmount = 100e6;
+
+        vm.startPrank(sender);
+        usdc.approve(address(sablierFlow), depositAmount);
+        streamId = sablierFlow.createAndDeposit(
+            sender, recipient, UD21x18.wrap(ratePerSecond), uint40(block.timestamp), usdc, true, depositAmount
+        );
+        vm.stopPrank();
+
+        // Warp past depletion
+        vm.warp(block.timestamp + 200);
+        assertTrue(sablierFlow.uncoveredDebtOf(streamId) > 0, "Should be insolvent");
+        assertEq(UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId)), ratePerSecond, "Rate unchanged while insolvent");
+
+        // Top up with 500 USDC
+        uint128 topUpAmount = 500e6;
+        vm.startPrank(sender);
+        usdc.approve(address(sablierFlow), topUpAmount);
+        sablierFlow.deposit(streamId, topUpAmount, sender, recipient);
+        vm.stopPrank();
+
+        assertEq(sablierFlow.uncoveredDebtOf(streamId), 0, "Should be solvent after top-up");
+        assertEq(UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId)), ratePerSecond, "Rate unchanged after top-up");
+
+        // Warp until the top-up is fully depleted
+        // Balance = 600, total debt at t=200 was 200, so remaining = 400 USDC at 1/s = 400s more
+        uint256 depletionTime = sablierFlow.depletionTimeOf(streamId);
+        vm.warp(depletionTime + 100);
+
+        assertTrue(sablierFlow.uncoveredDebtOf(streamId) > 0, "Should be insolvent again");
+        assertEq(
+            UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId)),
+            ratePerSecond,
+            "Rate unchanged after top-up depleted"
+        );
+    }
+
     /*//////////////////////////////////////////////////////////////
                           PAUSE AND RESTART
     //////////////////////////////////////////////////////////////*/
