@@ -11,6 +11,7 @@ import {IERC4626} from "lib/openzeppelin-contracts/contracts/interfaces/IERC4626
 
 import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
 import {ISablierFlow, UD21x18} from "src/interfaces/sablier/ISablierFlow.sol";
+import {FlowGuard} from "src/FlowGuard.sol";
 
 /// @title IFlowStrategyKeeper
 /// @notice Interface for the FlowStrategyKeeper contract
@@ -23,10 +24,7 @@ interface IFlowStrategyKeeper {
         address baseAsset; // The base asset (e.g., USDC)
         address borrower; // Address to receive principal
         address feeWallet; // Address to receive 1/feeFraction of interest
-        address streamReceiver; // Recipient of the Sablier Flow stream
-        address sablierFlow; // Sablier Flow contract
-        uint256 streamId; // Pre-existing Sablier Flow stream ID
-        uint8 tokenDecimals; // Decimals of the base asset token (e.g., 6 for USDC)
+        address flowGuard; // FlowGuard module that wraps Sablier Flow stream operations
         uint256 minThreshold; // Minimum vault balance to trigger allocation
         uint256 minResidual; // Minimum to keep in Safe after disbursement
         uint256 apr; // APR where 1e18 = 100%
@@ -71,7 +69,7 @@ interface IFlowStrategyKeeper {
 /// @dev Deployed directly (no proxy). Must be registered as a module on the Gnosis Safe.
 ///      Unlike StrategyKeeper which creates new Sablier Lockup Linear streams per disbursement,
 ///      this contract deposits into and adjusts the rate of a pre-existing Sablier Flow stream.
-///      The rate is calibrated to drain the stream balance by the next checkpoint (holdingPeriod intervals).
+///      Each deposit appends an additional rate (deposit / holdingPeriod) on top of the current rate.
 contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, ReentrancyGuard, Pausable, Initializable {
     /// @notice Role required to call the keeper function (on-chain computed parameters)
     bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
@@ -109,8 +107,6 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
     /// @notice Timestamp of last processing
     uint256 private _lastProcessedTimestamp;
 
-    /// @notice Timestamp of the next checkpoint (when the stream balance should be drained)
-    uint256 private _nextCheckpoint;
 
     /// @notice Creates a new FlowStrategyKeeper
     /// @param _admin Admin address that receives DEFAULT_ADMIN_ROLE, CONFIG_MANAGER_ROLE, and PAUSER_ROLE
@@ -235,9 +231,9 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
         );
     }
 
-    /// @notice Deposit yield into the flow stream and adjust the streaming rate
-    /// @dev Calculates the UD21x18 rate to drain the stream balance by the next checkpoint.
-    ///      Handles both paused streams (via restartAndDeposit) and active streams (deposit + adjustRate).
+    /// @notice Deposit yield into the flow stream and increase the streaming rate via FlowGuard
+    /// @dev Delegates to the FlowGuard module, which computes the rate delta, enforces
+    ///      guard rails (max delta, max rate, increase-only), and executes through the Safe.
     /// @param cfg Keeper configuration
     /// @param amount Amount of tokens to deposit into the stream
     /// @return newRate The new rate per second in UD21x18 format
@@ -246,56 +242,12 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
         returns (uint128 newRate)
     {
         if (amount > type(uint128).max) revert StreamAmountExceedsUint128(amount);
-        uint128 depositAmount = uint128(amount);
 
-        ISablierFlow flow = ISablierFlow(cfg.sablierFlow);
+        FlowGuard guard = FlowGuard(cfg.flowGuard);
+        guard.increaseRate(uint128(amount));
 
-        // Get current refundable balance (balance - covered debt) before deposit
-        uint128 currentRefundable = flow.refundableAmountOf(cfg.streamId);
-        uint256 totalAvailable = uint256(currentRefundable) + uint256(depositAmount);
-
-        // Calculate time to next checkpoint
-        uint256 timeToCheckpoint;
-        if (_nextCheckpoint == 0 || block.timestamp >= _nextCheckpoint) {
-            _nextCheckpoint = block.timestamp + cfg.holdingPeriod;
-            timeToCheckpoint = cfg.holdingPeriod;
-        } else {
-            timeToCheckpoint = _nextCheckpoint - block.timestamp;
-        }
-
-        // Calculate UD21x18 rate to drain totalAvailable over timeToCheckpoint
-        // UD21x18: 1e18 = 1 token per second (1 full token, not 1 base unit)
-        // rate = totalAvailable_base_units / timeToCheckpoint (base units per second)
-        // UD21x18 rate = (totalAvailable * 1e18) / (timeToCheckpoint * 10^tokenDecimals)
-        newRate = uint128((totalAvailable * 1e18) / (timeToCheckpoint * (10 ** cfg.tokenDecimals)));
-        if (newRate == 0) revert ZeroRate();
-
-        // Approve Sablier Flow to spend from Safe
-        bytes memory approveData = abi.encodeCall(IERC20.approve, (cfg.sablierFlow, amount));
-        _executeSafeTransaction(cfg, cfg.baseAsset, 0, approveData);
-
-        // Check if stream is paused by reading the rate (rate == 0 means paused)
-        UD21x18 currentRate = flow.getRatePerSecond(cfg.streamId);
-        bool paused = UD21x18.unwrap(currentRate) == 0;
-
-        if (paused) {
-            // Stream is paused, use restartAndDeposit (combines restart + deposit in one call)
-            bytes memory data =
-                abi.encodeCall(ISablierFlow.restartAndDeposit, (cfg.streamId, UD21x18.wrap(newRate), depositAmount));
-            _executeSafeTransaction(cfg, cfg.sablierFlow, 0, data);
-        } else {
-            // Stream is active: deposit first, then adjust rate
-            bytes memory depositData =
-                abi.encodeCall(ISablierFlow.deposit, (cfg.streamId, depositAmount, cfg.safe, cfg.streamReceiver));
-            _executeSafeTransaction(cfg, cfg.sablierFlow, 0, depositData);
-
-            // Adjust rate if it changed (adjustRatePerSecond reverts if rate is unchanged)
-            if (UD21x18.unwrap(currentRate) != newRate) {
-                bytes memory adjustData =
-                    abi.encodeCall(ISablierFlow.adjustRatePerSecond, (cfg.streamId, UD21x18.wrap(newRate)));
-                _executeSafeTransaction(cfg, cfg.sablierFlow, 0, adjustData);
-            }
-        }
+        // Read back the new rate for the event
+        newRate = uint128(UD21x18.unwrap(ISablierFlow(address(guard.FLOW())).getRatePerSecond(guard.STREAM_ID())));
     }
 
     /// @notice Emit the KeeperExecuted event (extracted to avoid stack-too-deep)
@@ -370,11 +322,6 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
         return _lastProcessedTimestamp;
     }
 
-    /// @notice Get the next checkpoint timestamp
-    /// @return The Unix timestamp of the next checkpoint (when the stream balance should be drained)
-    function nextCheckpoint() external view returns (uint256) {
-        return _nextCheckpoint;
-    }
 
     /// @notice Allocate funds from vault to strategy via processor
     /// @param cfg Keeper configuration
@@ -440,8 +387,7 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
         if (config_.baseAsset == address(0)) revert ZeroAddress();
         if (config_.borrower == address(0)) revert ZeroAddress();
         if (config_.feeWallet == address(0)) revert ZeroAddress();
-        if (config_.streamReceiver == address(0)) revert ZeroAddress();
-        if (config_.sablierFlow == address(0)) revert ZeroAddress();
+        if (config_.flowGuard == address(0)) revert ZeroAddress();
         if (config_.apr == 0 || config_.apr > PRECISION) revert InvalidConfiguration();
         if (config_.holdingPeriod == 0) revert InvalidConfiguration();
         if (config_.holdingPeriod > MAX_HOLDING_PERIOD) {
@@ -449,7 +395,6 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
         }
         if (config_.minProcessingPercent > PRECISION) revert InvalidConfiguration();
         if (config_.feeFraction < 2) revert InvalidConfiguration();
-        if (config_.tokenDecimals > 18) revert InvalidConfiguration();
 
         _config = config_;
         emit ConfigUpdated(config_.vault, config_.safe, config_.apr, config_.holdingPeriod, config_.feeFraction);

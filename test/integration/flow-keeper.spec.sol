@@ -9,6 +9,7 @@ import {SafeProxy} from "lib/safe-smart-account/contracts/proxies/SafeProxy.sol"
 import {Enum} from "lib/safe-smart-account/contracts/libraries/Enum.sol";
 
 import {FlowStrategyKeeper, IFlowStrategyKeeper} from "src/FlowStrategyKeeper.sol";
+import {FlowGuard} from "src/FlowGuard.sol";
 import {ISablierFlow, UD21x18} from "src/interfaces/sablier/ISablierFlow.sol";
 import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
 import {MainnetKeeperContracts} from "@script/Contracts.sol";
@@ -20,6 +21,7 @@ import {MainnetKeeperContracts} from "@script/Contracts.sol";
 ///         different deposit sizes, late top-up (insolvency recovery), and withdrawal verification.
 contract FlowStrategyKeeperIntegrationTest is Test {
     FlowStrategyKeeper public keeper;
+    FlowGuard public flowGuard;
     ISablierFlow public sablierFlow;
     IERC20 public usdc;
     Safe public safe;
@@ -79,6 +81,22 @@ contract FlowStrategyKeeperIntegrationTest is Test {
             address(safe), streamReceiver, UD21x18.wrap(initialRate), uint40(block.timestamp), usdc, true
         );
 
+        // Deploy FlowGuard (no rate limits for basic tests)
+        flowGuard = new FlowGuard(
+            address(this), // admin
+            address(safe),
+            address(sablierFlow),
+            streamId,
+            address(usdc),
+            streamReceiver,
+            HOLDING_PERIOD,
+            0, // maxRateDelta (unlimited)
+            0 // maxRate (unlimited)
+        );
+
+        // Enable FlowGuard as a module on the Safe (it executes stream ops through Safe)
+        _enableModuleOnSafe(address(flowGuard));
+
         // Deploy FlowStrategyKeeper
         keeper = new FlowStrategyKeeper(address(this), address(this), admin, keeperBot);
 
@@ -91,10 +109,7 @@ contract FlowStrategyKeeperIntegrationTest is Test {
                 baseAsset: address(usdc),
                 borrower: borrower,
                 feeWallet: feeWallet,
-                streamReceiver: streamReceiver,
-                sablierFlow: address(sablierFlow),
-                streamId: streamId,
-                tokenDecimals: TOKEN_DECIMALS,
+                flowGuard: address(flowGuard),
                 minThreshold: MIN_THRESHOLD,
                 minResidual: MIN_RESIDUAL,
                 apr: APR,
@@ -104,17 +119,24 @@ contract FlowStrategyKeeperIntegrationTest is Test {
             })
         );
 
+        // Grant keeper OPERATOR_ROLE on FlowGuard
+        flowGuard.grantRole(flowGuard.OPERATOR_ROLE(), address(keeper));
+
         // Separate KEEPER_ROLE and POWER_KEEPER_ROLE onto different addresses
         keeper.grantRole(keeper.POWER_KEEPER_ROLE(), powerKeeperBot);
         keeper.revokeRole(keeper.POWER_KEEPER_ROLE(), keeperBot);
 
-        // Enable keeper as a module on the Safe
+        // Enable keeper as a module on the Safe (for principal/fee transfers)
         _enableModuleOnSafe(address(keeper));
 
         // Transfer admin roles
         keeper.grantRole(keeper.DEFAULT_ADMIN_ROLE(), admin);
         keeper.grantRole(keeper.CONFIG_MANAGER_ROLE(), admin);
         keeper.grantRole(keeper.PAUSER_ROLE(), admin);
+
+        // Transfer FlowGuard admin to admin
+        flowGuard.grantRole(flowGuard.DEFAULT_ADMIN_ROLE(), admin);
+        flowGuard.renounceRole(flowGuard.DEFAULT_ADMIN_ROLE(), address(this));
 
         // Renounce test contract's roles
         keeper.renounceRole(keeper.PAUSER_ROLE(), address(this));
@@ -159,10 +181,8 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         assertEq(cfg.safe, address(safe));
         assertEq(cfg.borrower, borrower);
         assertEq(cfg.feeWallet, feeWallet);
-        assertEq(cfg.streamReceiver, streamReceiver);
-        assertEq(cfg.sablierFlow, address(sablierFlow));
-        assertEq(cfg.streamId, streamId);
-        assertEq(cfg.tokenDecimals, TOKEN_DECIMALS);
+        assertEq(cfg.flowGuard, address(flowGuard));
+        assertEq(flowGuard.TOKEN_DECIMALS(), TOKEN_DECIMALS);
         assertEq(cfg.apr, APR);
         assertEq(cfg.holdingPeriod, HOLDING_PERIOD);
         assertEq(cfg.feeFraction, FEE_FRACTION);
@@ -206,12 +226,10 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         uint256 safeBalAfter = usdc.balanceOf(address(safe));
         assertEq(safeBalBefore - safeBalAfter, available, "Total deducted from Safe");
 
-        // Verify rate was adjusted
+        // Verify rate was adjusted: newRate = initialRate(1) + streamAmount / holdingPeriod
+        uint128 expectedRate = 1 + uint128((expectedStreamAmount * 1e18) / (HOLDING_PERIOD * (10 ** TOKEN_DECIMALS)));
         uint128 rate = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
-        assertTrue(rate > 1, "Rate should be increased from initial value");
-
-        // Verify checkpoint was set
-        assertEq(keeper.nextCheckpoint(), block.timestamp + HOLDING_PERIOD, "Checkpoint should be set");
+        assertEq(rate, expectedRate, "Rate should equal initial + additional");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -253,35 +271,28 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         uint256 expectedInterest = (available * APR * HOLDING_PERIOD) / 365 days / 1e18;
         uint256 expectedStreamAmount = expectedInterest - expectedInterest / FEE_FRACTION;
 
-        // Rate should drain streamAmount over HOLDING_PERIOD
-        // UD21x18 rate = (streamAmount * 1e18) / (HOLDING_PERIOD * 10^6)
-        uint128 expectedRate = uint128((expectedStreamAmount * 1e18) / (HOLDING_PERIOD * (10 ** TOKEN_DECIMALS)));
+        // Rate = initialRate(1) + streamAmount / holdingPeriod
+        uint128 additionalRate = uint128((expectedStreamAmount * 1e18) / (HOLDING_PERIOD * (10 ** TOKEN_DECIMALS)));
+        uint128 expectedRate = 1 + additionalRate;
 
         uint128 actualRate = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
         assertEq(actualRate, expectedRate, "Rate should match calculated value");
-
-        // Verify the stream will be approximately drained by the checkpoint
-        // At this rate, over HOLDING_PERIOD, streamed amount should ≈ streamAmount
-        // streamed = rate * HOLDING_PERIOD * 10^6 / 1e18
-        uint256 streamedOverPeriod = (uint256(actualRate) * HOLDING_PERIOD * (10 ** TOKEN_DECIMALS)) / 1e18;
-        assertApproxEqAbs(streamedOverPeriod, expectedStreamAmount, 1e3, "Should drain stream over holding period");
     }
 
     /*//////////////////////////////////////////////////////////////
                     MULTIPLE DEPOSITS SAME EPOCH
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Test two processInflows within the same 28-day checkpoint period
+    /// @notice Test two processInflows: rate should be additive
     function test_processInflows_multipleSameEpoch() public {
         // First deposit: 100,000 USDC
         uint256 available1 = 100_000e6;
         vm.prank(powerKeeperBot);
         keeper.processInflows(0, available1);
 
-        uint256 checkpoint1 = keeper.nextCheckpoint();
         uint128 rate1 = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
 
-        // Warp 7 days into the epoch
+        // Warp 7 days
         vm.warp(block.timestamp + 7 days);
 
         // Second deposit: 50,000 USDC
@@ -289,14 +300,13 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         vm.prank(powerKeeperBot);
         keeper.processInflows(0, available2);
 
-        uint256 checkpoint2 = keeper.nextCheckpoint();
         uint128 rate2 = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
 
-        // Checkpoint should NOT advance (still within the same epoch)
-        assertEq(checkpoint2, checkpoint1, "Checkpoint should stay the same within epoch");
-
-        // Rate should be higher (more balance to drain over less time)
-        assertTrue(rate2 > rate1, "Rate should increase with additional deposit in same epoch");
+        // Rate should be additive: rate1 + additionalRate from second deposit
+        uint256 interest2 = (available2 * APR * HOLDING_PERIOD) / 365 days / 1e18;
+        uint256 streamAmount2 = interest2 - interest2 / FEE_FRACTION;
+        uint128 additionalRate = uint128((streamAmount2 * 1e18) / (HOLDING_PERIOD * (10 ** TOKEN_DECIMALS)));
+        assertEq(rate2, rate1 + additionalRate, "Rate should be additive");
 
         // The stream should have a positive balance (both deposits minus accrued debt)
         assertTrue(sablierFlow.getBalance(streamId) > 0, "Stream should have positive balance");
@@ -306,32 +316,30 @@ contract FlowStrategyKeeperIntegrationTest is Test {
                     DEPOSITS ACROSS EPOCHS
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Test processInflows across checkpoint boundaries
+    /// @notice Test processInflows after a long gap: rate keeps accumulating
     function test_processInflows_acrossEpochs() public {
-        // Epoch 1: deposit
+        // First deposit
         uint256 available1 = 100_000e6;
         vm.prank(powerKeeperBot);
         keeper.processInflows(0, available1);
 
-        uint256 checkpoint1 = keeper.nextCheckpoint();
+        uint128 rate1 = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
 
-        // Warp past the checkpoint (28 days + 1 day)
-        vm.warp(checkpoint1 + 1 days);
+        // Warp 29 days (past one holding period)
+        vm.warp(block.timestamp + 29 days);
 
-        // Epoch 2: new deposit
+        // Second deposit
         uint256 available2 = 80_000e6;
         vm.prank(powerKeeperBot);
         keeper.processInflows(0, available2);
 
-        uint256 checkpoint2 = keeper.nextCheckpoint();
-
-        // Checkpoint should advance to a new period
-        assertTrue(checkpoint2 > checkpoint1, "Checkpoint should advance");
-        assertEq(checkpoint2, block.timestamp + HOLDING_PERIOD, "New checkpoint = now + holdingPeriod");
-
-        // Rate should be recalculated for the new epoch
         uint128 rate2 = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
-        assertTrue(rate2 > 0, "Rate should be positive");
+
+        // Rate should be additive regardless of time elapsed
+        uint256 interest2 = (available2 * APR * HOLDING_PERIOD) / 365 days / 1e18;
+        uint256 streamAmount2 = interest2 - interest2 / FEE_FRACTION;
+        uint128 additionalRate = uint128((streamAmount2 * 1e18) / (HOLDING_PERIOD * (10 ** TOKEN_DECIMALS)));
+        assertEq(rate2, rate1 + additionalRate, "Rate should be additive across epochs");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -347,8 +355,8 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         keeper.processInflows(0, small);
         uint256 principal1 = usdc.balanceOf(borrower) - borrowerBal0;
 
-        // Reset checkpoint for clean test
-        vm.warp(keeper.nextCheckpoint() + 1);
+        // Warp past holding period
+        vm.warp(block.timestamp + HOLDING_PERIOD + 1);
 
         // Medium deposit: 500,000 USDC
         uint256 medium = 500_000e6;
@@ -357,8 +365,8 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         keeper.processInflows(0, medium);
         uint256 principal2 = usdc.balanceOf(borrower) - borrowerBal1;
 
-        // Reset checkpoint
-        vm.warp(keeper.nextCheckpoint() + 1);
+        // Warp past holding period
+        vm.warp(block.timestamp + HOLDING_PERIOD + 1);
 
         // Large deposit: 5,000,000 USDC
         uint256 large = 5_000_000e6;
@@ -387,8 +395,8 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         uint256 depletionTime = sablierFlow.depletionTimeOf(streamId);
         assertTrue(depletionTime > block.timestamp, "Depletion should be in the future");
 
-        // Warp well past depletion (checkpoint + 14 days extra)
-        vm.warp(keeper.nextCheckpoint() + 14 days);
+        // Warp well past depletion
+        vm.warp(depletionTime + 14 days);
 
         // Stream should be insolvent
         uint256 uncoveredDebt = sablierFlow.uncoveredDebtOf(streamId);
@@ -399,12 +407,12 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         vm.prank(powerKeeperBot);
         keeper.processInflows(0, available2);
 
-        // After recovery, the stream should have a new rate and checkpoint
+        // After recovery, the rate should have increased additively
         uint128 newRate = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
         assertTrue(newRate > 0, "Rate should be positive after recovery");
 
-        uint256 newCheckpoint = keeper.nextCheckpoint();
-        assertEq(newCheckpoint, block.timestamp + HOLDING_PERIOD, "Checkpoint should reset after late top-up");
+        // Stream should be solvent again
+        assertEq(sablierFlow.uncoveredDebtOf(streamId), 0, "Should be solvent after top-up");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -432,10 +440,10 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         sablierFlow.withdrawMax(streamId, streamReceiver);
 
         uint256 received = usdc.balanceOf(streamReceiver) - receiverBalBefore;
-        assertApproxEqAbs(received, withdrawable, 1e3, "Receiver should get the withdrawable amount");
+        assertEq(received, withdrawable, "Receiver should get the withdrawable amount");
 
-        // Warp to end of holding period
-        vm.warp(keeper.nextCheckpoint());
+        // Warp 14 more days
+        vm.warp(block.timestamp + 14 days);
 
         // Withdraw remaining
         uint128 remainingWithdrawable = sablierFlow.withdrawableAmountOf(streamId);
@@ -456,8 +464,8 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         uint256 expectedInterest = (available * APR * HOLDING_PERIOD) / 365 days / 1e18;
         uint256 expectedStreamAmount = expectedInterest - expectedInterest / FEE_FRACTION;
 
-        // Warp to the checkpoint (full holding period)
-        vm.warp(keeper.nextCheckpoint());
+        // Warp a full holding period
+        vm.warp(block.timestamp + HOLDING_PERIOD);
 
         // The total withdrawable should be approximately the stream amount
         uint128 withdrawable = sablierFlow.withdrawableAmountOf(streamId);
@@ -562,34 +570,33 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         uint128 rate1b = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
         assertTrue(rate1b > rate1, "Rate should increase with additional deposit");
 
-        // === Epoch 2 ===
-        vm.warp(keeper.nextCheckpoint() + 1);
+        // === Period 2 ===
+        vm.warp(block.timestamp + HOLDING_PERIOD + 1);
 
         uint256 available2 = 200_000e6;
         vm.prank(powerKeeperBot);
         keeper.processInflows(0, available2);
 
         uint128 rate2 = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
-        assertTrue(rate2 > 0, "Rate should be set in epoch 2");
+        assertTrue(rate2 > rate1b, "Rate should increase with third deposit");
 
-        // Let epoch 2 complete
-        vm.warp(keeper.nextCheckpoint());
+        // Let it stream for another holding period
+        vm.warp(block.timestamp + HOLDING_PERIOD);
 
         // Recipient withdraws everything
         vm.prank(streamReceiver);
         uint128 withdrawn = sablierFlow.withdrawMax(streamId, streamReceiver);
         assertTrue(withdrawn > 0, "Should withdraw accumulated yield");
 
-        // === Epoch 3 (late - past checkpoint) ===
-        vm.warp(block.timestamp + 7 days); // 7 days past epoch 2's checkpoint
+        // === Period 3 ===
+        vm.warp(block.timestamp + 7 days);
 
         uint256 available3 = 150_000e6;
         vm.prank(powerKeeperBot);
         keeper.processInflows(0, available3);
 
-        // Verify recovery
+        // Rate should keep accumulating
         uint128 rate3 = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
-        assertTrue(rate3 > 0, "Rate should be positive after late epoch 3");
-        assertEq(keeper.nextCheckpoint(), block.timestamp + HOLDING_PERIOD, "New checkpoint after late recovery");
+        assertTrue(rate3 > rate2, "Rate should increase with fourth deposit");
     }
 }
