@@ -46,7 +46,7 @@ contract FlowStrategyKeeperIntegrationTest is Test {
     uint256 constant HOLDING_PERIOD = 28 days;
     uint256 constant MIN_THRESHOLD = 200_000e6;
     uint256 constant MIN_RESIDUAL = 1_000e6;
-    uint256 constant FEE_FRACTION = 11;
+    uint256 constant FEE_FRACTION = 10; // fee = interest / 10 = 1.1% (on top of 11% interest)
     uint8 constant TOKEN_DECIMALS = 6;
 
     // UD21x18 scaling factor for USDC (6 decimals): 1e18 / 1e6 = 1e12
@@ -81,7 +81,7 @@ contract FlowStrategyKeeperIntegrationTest is Test {
             address(safe), streamReceiver, UD21x18.wrap(initialRate), uint40(block.timestamp), usdc, true
         );
 
-        // Deploy FlowGuard (no rate limits for basic tests)
+        // Deploy FlowGuard with APR (no rate limits for basic tests)
         flowGuard = new FlowGuard(
             address(this), // admin
             address(safe),
@@ -89,6 +89,7 @@ contract FlowStrategyKeeperIntegrationTest is Test {
             streamId,
             address(usdc),
             streamReceiver,
+            APR,
             HOLDING_PERIOD,
             0, // maxRateDelta (unlimited)
             0 // maxRate (unlimited)
@@ -100,7 +101,7 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         // Deploy FlowStrategyKeeper
         keeper = new FlowStrategyKeeper(address(this), address(this), admin, keeperBot);
 
-        // Initialize with config
+        // Initialize with config (no apr/holdingPeriod - those are in FlowGuard)
         keeper.initialize(
             IFlowStrategyKeeper.FlowKeeperConfig({
                 vault: vault,
@@ -112,8 +113,6 @@ contract FlowStrategyKeeperIntegrationTest is Test {
                 flowGuard: address(flowGuard),
                 minThreshold: MIN_THRESHOLD,
                 minResidual: MIN_RESIDUAL,
-                apr: APR,
-                holdingPeriod: HOLDING_PERIOD,
                 minProcessingPercent: 0.01e18,
                 feeFraction: FEE_FRACTION
             })
@@ -183,8 +182,8 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         assertEq(cfg.feeWallet, feeWallet);
         assertEq(cfg.flowGuard, address(flowGuard));
         assertEq(flowGuard.TOKEN_DECIMALS(), TOKEN_DECIMALS);
-        assertEq(cfg.apr, APR);
-        assertEq(cfg.holdingPeriod, HOLDING_PERIOD);
+        assertEq(flowGuard.apr(), APR);
+        assertEq(flowGuard.holdingPeriod(), HOLDING_PERIOD);
         assertEq(cfg.feeFraction, FEE_FRACTION);
     }
 
@@ -193,15 +192,23 @@ contract FlowStrategyKeeperIntegrationTest is Test {
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Test basic processInflows: principal -> borrower, fee -> feeWallet, yield -> flow stream
+    /// @dev With new FlowGuard architecture:
+    ///      - interest = available * APR * holdingPeriod / year (FlowGuard computes)
+    ///      - fee = interest / feeFraction (on top of interest)
+    ///      - principal = available - interest - fee
+    ///      - stream receives full interest amount
     function test_processInflows_basic() public {
         uint256 available = 100_000e6; // 100,000 USDC
 
         // Calculate expected values
         // interest = 100,000 * 0.11 * 28days / 365days = ~843.835 USDC
         uint256 expectedInterest = (available * APR * HOLDING_PERIOD) / 365 days / 1e18;
+        // fee = interest / 10 (on top of interest)
         uint256 expectedFee = expectedInterest / FEE_FRACTION;
-        uint256 expectedStreamAmount = expectedInterest - expectedFee;
-        uint256 expectedPrincipal = available - expectedInterest;
+        // stream receives full interest
+        uint256 expectedStreamAmount = expectedInterest;
+        // principal = available - interest - fee
+        uint256 expectedPrincipal = available - expectedInterest - expectedFee;
 
         uint256 borrowerBalBefore = usdc.balanceOf(borrower);
         uint256 feeWalletBalBefore = usdc.balanceOf(feeWallet);
@@ -218,7 +225,7 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         // Verify fee went to feeWallet
         assertEq(usdc.balanceOf(feeWallet) - feeWalletBalBefore, expectedFee, "Fee to feeWallet");
 
-        // Verify stream was deposited
+        // Verify stream was deposited with full interest
         uint128 streamBalAfter = sablierFlow.getBalance(streamId);
         assertEq(uint256(streamBalAfter) - uint256(streamBalBefore), expectedStreamAmount, "Stream deposit");
 
@@ -226,7 +233,7 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         uint256 safeBalAfter = usdc.balanceOf(address(safe));
         assertEq(safeBalBefore - safeBalAfter, available, "Total deducted from Safe");
 
-        // Verify rate was adjusted: newRate = initialRate(1) + streamAmount / holdingPeriod
+        // Verify rate was adjusted: newRate = initialRate(1) + interest / holdingPeriod
         uint128 expectedRate = 1 + uint128((expectedStreamAmount * 1e18) / (HOLDING_PERIOD * (10 ** TOKEN_DECIMALS)));
         uint128 rate = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
         assertEq(rate, expectedRate, "Rate should equal initial + additional");
@@ -250,11 +257,12 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         uint256 expectedInterest = (available * APR * HOLDING_PERIOD) / 365 days / 1e18;
         uint256 actualPrincipal = usdc.balanceOf(borrower) - borrowerBalBefore;
         uint256 actualFee = usdc.balanceOf(feeWallet) - feeWalletBalBefore;
-        uint256 actualInterest = (available - actualPrincipal);
+        // principal = available - interest - fee
+        uint256 actualInterest = available - actualPrincipal - actualFee;
 
         assertEq(actualInterest, expectedInterest, "Interest calculation");
         assertEq(actualFee, expectedInterest / FEE_FRACTION, "Fee calculation");
-        assertEq(actualPrincipal, available - expectedInterest, "Principal calculation");
+        assertEq(actualPrincipal, available - expectedInterest - actualFee, "Principal calculation");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -269,9 +277,10 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         keeper.processInflows(0, available);
 
         uint256 expectedInterest = (available * APR * HOLDING_PERIOD) / 365 days / 1e18;
-        uint256 expectedStreamAmount = expectedInterest - expectedInterest / FEE_FRACTION;
+        // Stream receives full interest (no fee deduction from stream)
+        uint256 expectedStreamAmount = expectedInterest;
 
-        // Rate = initialRate(1) + streamAmount / holdingPeriod
+        // Rate = initialRate(1) + interest / holdingPeriod
         uint128 additionalRate = uint128((expectedStreamAmount * 1e18) / (HOLDING_PERIOD * (10 ** TOKEN_DECIMALS)));
         uint128 expectedRate = 1 + additionalRate;
 
@@ -302,10 +311,9 @@ contract FlowStrategyKeeperIntegrationTest is Test {
 
         uint128 rate2 = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
 
-        // Rate should be additive: rate1 + additionalRate from second deposit
+        // Rate should be additive: rate1 + additionalRate from second deposit's interest
         uint256 interest2 = (available2 * APR * HOLDING_PERIOD) / 365 days / 1e18;
-        uint256 streamAmount2 = interest2 - interest2 / FEE_FRACTION;
-        uint128 additionalRate = uint128((streamAmount2 * 1e18) / (HOLDING_PERIOD * (10 ** TOKEN_DECIMALS)));
+        uint128 additionalRate = uint128((interest2 * 1e18) / (HOLDING_PERIOD * (10 ** TOKEN_DECIMALS)));
         assertEq(rate2, rate1 + additionalRate, "Rate should be additive");
 
         // The stream should have a positive balance (both deposits minus accrued debt)
@@ -337,8 +345,7 @@ contract FlowStrategyKeeperIntegrationTest is Test {
 
         // Rate should be additive regardless of time elapsed
         uint256 interest2 = (available2 * APR * HOLDING_PERIOD) / 365 days / 1e18;
-        uint256 streamAmount2 = interest2 - interest2 / FEE_FRACTION;
-        uint128 additionalRate = uint128((streamAmount2 * 1e18) / (HOLDING_PERIOD * (10 ** TOKEN_DECIMALS)));
+        uint128 additionalRate = uint128((interest2 * 1e18) / (HOLDING_PERIOD * (10 ** TOKEN_DECIMALS)));
         assertEq(rate2, rate1 + additionalRate, "Rate should be additive across epochs");
     }
 
@@ -461,8 +468,9 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         vm.prank(powerKeeperBot);
         keeper.processInflows(0, available);
 
+        // Stream receives full interest (no fee deduction from stream)
         uint256 expectedInterest = (available * APR * HOLDING_PERIOD) / 365 days / 1e18;
-        uint256 expectedStreamAmount = expectedInterest - expectedInterest / FEE_FRACTION;
+        uint256 expectedStreamAmount = expectedInterest;
 
         // Warp a full holding period
         vm.warp(block.timestamp + HOLDING_PERIOD);

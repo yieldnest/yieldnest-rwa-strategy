@@ -23,14 +23,12 @@ interface IFlowStrategyKeeper {
         address safe; // Gnosis Safe holding the funds (keeper must be enabled as module)
         address baseAsset; // The base asset (e.g., USDC)
         address borrower; // Address to receive principal
-        address feeWallet; // Address to receive 1/feeFraction of interest
+        address feeWallet; // Address to receive fee (interest / feeFraction)
         address flowGuard; // FlowGuard module that wraps Sablier Flow stream operations
         uint256 minThreshold; // Minimum vault balance to trigger allocation
         uint256 minResidual; // Minimum to keep in Safe after disbursement
-        uint256 apr; // APR where 1e18 = 100%
-        uint256 holdingPeriod; // Duration in seconds for yield checkpoint (e.g., 28 days = 2419200)
         uint256 minProcessingPercent; // Min % of vault total for time-based fallback (1e18 = 100%)
-        uint256 feeFraction; // Fee denominator (e.g., 11 means 1/11 to fee wallet, 10/11 to stream)
+        uint256 feeFraction; // Fee denominator: fee = interest / feeFraction, added on top of interest
     }
 
     error ZeroAddress();
@@ -39,10 +37,7 @@ interface IFlowStrategyKeeper {
     error SafeExecutionFailed();
     error InvalidConfiguration();
     error NoFundsToProcess();
-    error StreamAmountExceedsUint128(uint256 amount);
-    error HoldingPeriodExceedsMaximum(uint256 holdingPeriod, uint256 maximum);
     error ZeroInterest();
-    error ZeroRate();
 
     event KeeperExecuted(
         uint256 indexed timestamp,
@@ -58,18 +53,16 @@ interface IFlowStrategyKeeper {
         uint256 streamAmount,
         uint128 newRatePerSecond
     );
-    event ConfigUpdated(
-        address indexed vault, address indexed safe, uint256 apr, uint256 holdingPeriod, uint256 feeFraction
-    );
+    event ConfigUpdated(address indexed vault, address indexed safe, uint256 feeFraction);
 }
 
 /// @title FlowStrategyKeeper
 /// @notice Keeper contract that monitors vault balances, allocates to strategy,
 ///         and disburses funds from the Safe with yield holdback via a Sablier Flow stream.
 /// @dev Deployed directly (no proxy). Must be registered as a module on the Gnosis Safe.
-///      Unlike StrategyKeeper which creates new Sablier Lockup Linear streams per disbursement,
-///      this contract deposits into and adjusts the rate of a pre-existing Sablier Flow stream.
-///      Each deposit appends an additional rate (deposit / holdingPeriod) on top of the current rate.
+///      Interest calculation is delegated to the FlowGuard, which knows about APR and holding period.
+///      The keeper queries FlowGuard for interest, then computes fee on top (interest / feeFraction).
+///      Each deposit appends an additional rate on top of the current rate.
 contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, ReentrancyGuard, Pausable, Initializable {
     /// @notice Role required to call the keeper function (on-chain computed parameters)
     bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
@@ -92,14 +85,8 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
     /// @notice Precision for percentage calculations (1e18 = 100%)
     uint256 public constant PRECISION = 1e18;
 
-    /// @notice Seconds per year for APR calculation (365 days)
-    uint256 public constant SECONDS_PER_YEAR = 365 days;
-
     /// @notice Time interval for fallback processing (24 hours)
     uint256 public constant FALLBACK_INTERVAL = 24 hours;
-
-    /// @notice Maximum holding period (1 year in seconds)
-    uint256 public constant MAX_HOLDING_PERIOD = 365 days;
 
     /// @notice Keeper configuration
     FlowKeeperConfig private _config;
@@ -190,9 +177,10 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
     }
 
     /// @notice Common inflow execution logic shared by both processInflows variants
+    /// @dev Interest is queried from FlowGuard. Fee is computed on top of interest.
     /// @param cfg Keeper configuration
     /// @param vaultAllocation Amount allocated from vault (for event)
-    /// @param available Amount of safe funds to disburse
+    /// @param available Amount of safe funds to disburse (loanAmount)
     /// @param safeBalance Safe balance after allocation (for event)
     function _executeInflows(
         FlowKeeperConfig memory cfg,
@@ -200,15 +188,15 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
         uint256 available,
         uint256 safeBalance
     ) internal {
-        // Calculate yield holdback
-        // interest = available * apr * holdingPeriod / SECONDS_PER_YEAR / PRECISION
-        uint256 interest = (available * cfg.apr * cfg.holdingPeriod) / SECONDS_PER_YEAR / PRECISION;
-        if (interest == 0) revert ZeroInterest();
-        uint256 principal = available - interest;
+        FlowGuard guard = FlowGuard(cfg.flowGuard);
 
-        // Calculate fee split: 1/feeFraction to fee wallet, (feeFraction-1)/feeFraction to stream
+        // Query FlowGuard for interest (without fees)
+        uint256 interest = guard.computeInterest(available);
+        if (interest == 0) revert ZeroInterest();
+
+        // Fee is on top of interest: fee = interest / feeFraction
         uint256 fee = interest / cfg.feeFraction;
-        uint256 streamAmount = interest - fee;
+        uint256 principal = available - interest - fee;
 
         // Execute Safe transactions
         // Transfer principal to borrower
@@ -219,32 +207,30 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
             _executeSafeTransfer(cfg, cfg.feeWallet, fee);
         }
 
-        // Deposit into flow stream and adjust rate
-        uint128 newRate = _depositAndAdjustFlowRate(cfg, streamAmount);
+        // Deposit interest into flow stream and adjust rate (FlowGuard computes everything)
+        uint128 newRate = _depositAndAdjustFlowRate(cfg, available);
 
         // Record last processed timestamp
         _lastProcessedTimestamp = block.timestamp;
 
         _emitKeeperExecuted(
-            vaultAllocation, safeBalance, cfg.minResidual, available, interest, cfg.apr, cfg.holdingPeriod, principal,
-            fee, streamAmount, newRate
+            vaultAllocation, safeBalance, cfg.minResidual, available, interest,
+            guard.apr(), guard.holdingPeriod(), principal, fee, interest, newRate
         );
     }
 
     /// @notice Deposit yield into the flow stream and increase the streaming rate via FlowGuard
-    /// @dev Delegates to the FlowGuard module, which computes the rate delta, enforces
-    ///      guard rails (max delta, max rate, increase-only), and executes through the Safe.
+    /// @dev Delegates to the FlowGuard module, which computes interest from the loanAmount,
+    ///      deposits it, and adjusts the rate.
     /// @param cfg Keeper configuration
-    /// @param amount Amount of tokens to deposit into the stream
+    /// @param loanAmount The total loan amount (FlowGuard derives interest from this)
     /// @return newRate The new rate per second in UD21x18 format
-    function _depositAndAdjustFlowRate(FlowKeeperConfig memory cfg, uint256 amount)
+    function _depositAndAdjustFlowRate(FlowKeeperConfig memory cfg, uint256 loanAmount)
         internal
         returns (uint128 newRate)
     {
-        if (amount > type(uint128).max) revert StreamAmountExceedsUint128(amount);
-
         FlowGuard guard = FlowGuard(cfg.flowGuard);
-        guard.increaseRate(uint128(amount));
+        guard.increaseRate(loanAmount);
 
         // Read back the new rate for the event
         newRate = uint128(UD21x18.unwrap(ISablierFlow(address(guard.FLOW())).getRatePerSecond(guard.STREAM_ID())));
@@ -388,16 +374,11 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
         if (config_.borrower == address(0)) revert ZeroAddress();
         if (config_.feeWallet == address(0)) revert ZeroAddress();
         if (config_.flowGuard == address(0)) revert ZeroAddress();
-        if (config_.apr == 0 || config_.apr > PRECISION) revert InvalidConfiguration();
-        if (config_.holdingPeriod == 0) revert InvalidConfiguration();
-        if (config_.holdingPeriod > MAX_HOLDING_PERIOD) {
-            revert HoldingPeriodExceedsMaximum(config_.holdingPeriod, MAX_HOLDING_PERIOD);
-        }
         if (config_.minProcessingPercent > PRECISION) revert InvalidConfiguration();
         if (config_.feeFraction < 2) revert InvalidConfiguration();
 
         _config = config_;
-        emit ConfigUpdated(config_.vault, config_.safe, config_.apr, config_.holdingPeriod, config_.feeFraction);
+        emit ConfigUpdated(config_.vault, config_.safe, config_.feeFraction);
     }
 
     /// @notice Get the current configuration
