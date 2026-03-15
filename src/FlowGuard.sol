@@ -103,13 +103,6 @@ contract FlowGuard is AccessControlEnumerable {
     function increaseRate(uint128 depositAmount) external onlyRole(OPERATOR_ROLE) {
         if (depositAmount == 0) revert ZeroDeposit();
 
-
-        // BUG: the rateDelta is calculated incorrectly. The rate is calculated assuming the depositAmount is the loan amount
-        // therefore the rate is the extrapolation of how much per second should be paid given that there's a certain 
-        // amount of interest to be paid for the loan.
-
-        // the deposit amount should then be calculated based on the interest to be paid for holdingPeriod
-
         // Compute rate delta: UD21x18 rate = (depositAmount * 1e18) / (holdingPeriod * 10^decimals)
         uint128 rateDelta =
             uint128((uint256(depositAmount) * 1e18) / (holdingPeriod * (10 ** TOKEN_DECIMALS)));

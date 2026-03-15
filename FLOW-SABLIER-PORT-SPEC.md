@@ -4,7 +4,7 @@
 
 The docs for sablier flow are here:
 
-https://docs.sablier.com/guides/flow/overview
+https://docs.sablier.com/fides/flow/overview
 
 The code is here:
 
@@ -35,6 +35,26 @@ Therefore the yield withheld is not a fixed percentage of the sum being send to 
 
 This system a stream is created before hand and already exists.
 
+## The Flow Guard spec
+
+Keep in mind the Flow guard should encapsulate the logic of knowing about a certain new loanAmount.
+
+The loanAmount is used to derive the interestAmount for holdingPeriod and additionally calculate ratePerSecond delta.
+
+Do not leave any of this logic in the FlowStrategyKeeper.
+
+The FlowStrategyKeeper simply pases in the loanAmount it's aware of, but does not compute these things which are specific to the FlowGuard.
+
+
+Let FlowStrategyKeeper get info abotu the interest paid by querying The FlowGuard.
+
+Also make it so that the FlowGuard os only aware of the interest without fees. so in this case that's 11% for what the tests are using.
+
+The FlowStrategyKeeper will need to be able to to deduce by querying the FlowGuard for interest, how much is the fee.
+
+And that fee is added on top of the interest communicated by the FlowGuard.
+
+So the fee is 1.1% that's 11% /10. the fraction is 10 for this new approach to work.
 
 ## Test - Just the Sablier Flow system on its own
 
