@@ -10,7 +10,6 @@ import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.so
 import {IERC4626} from "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 
 import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
-import {ISablierFlow, UD21x18} from "src/interfaces/sablier/ISablierFlow.sol";
 import {FlowGuard} from "src/FlowGuard.sol";
 
 /// @title IFlowStrategyKeeper
@@ -32,12 +31,10 @@ interface IFlowStrategyKeeper {
     }
 
     error ZeroAddress();
-    error BelowThreshold(uint256 balance, uint256 threshold);
     error InsufficientSafeBalance(uint256 balance, uint256 required);
     error SafeExecutionFailed();
     error InvalidConfiguration();
     error NoFundsToProcess();
-    error ZeroInterest();
 
     event KeeperExecuted(
         uint256 indexed timestamp,
@@ -50,7 +47,6 @@ interface IFlowStrategyKeeper {
         uint256 holdingPeriod,
         uint256 principal,
         uint256 fee,
-        uint256 streamAmount,
         uint128 newRatePerSecond
     );
     event ConfigUpdated(address indexed vault, address indexed safe, uint256 feeFraction);
@@ -177,10 +173,11 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
     }
 
     /// @notice Common inflow execution logic shared by both processInflows variants
-    /// @dev Interest is queried from FlowGuard. Fee is computed on top of interest.
+    /// @dev FlowGuard computes interest and deposits it into the stream in a single call.
+    ///      Fee is computed on top of the interest returned by FlowGuard.
     /// @param cfg Keeper configuration
     /// @param vaultAllocation Amount allocated from vault (for event)
-    /// @param available Amount of safe funds to disburse (loanAmount)
+    /// @param available Amount of safe funds to disburse (loanAmount passed to FlowGuard)
     /// @param safeBalance Safe balance after allocation (for event)
     function _executeInflows(
         FlowKeeperConfig memory cfg,
@@ -190,15 +187,13 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
     ) internal {
         FlowGuard guard = FlowGuard(cfg.flowGuard);
 
-        // Query FlowGuard for interest (without fees)
-        uint256 interest = guard.computeInterest(available);
-        if (interest == 0) revert ZeroInterest();
+        // FlowGuard computes interest from available, deposits it, adjusts rate, returns both
+        (uint128 interest, uint128 newRate) = guard.increaseRate(available);
 
         // Fee is on top of interest: fee = interest / feeFraction
-        uint256 fee = interest / cfg.feeFraction;
-        uint256 principal = available - interest - fee;
+        uint256 fee = uint256(interest) / cfg.feeFraction;
+        uint256 principal = available - uint256(interest) - fee;
 
-        // Execute Safe transactions
         // Transfer principal to borrower
         _executeSafeTransfer(cfg, cfg.borrower, principal);
 
@@ -207,33 +202,13 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
             _executeSafeTransfer(cfg, cfg.feeWallet, fee);
         }
 
-        // Deposit interest into flow stream and adjust rate (FlowGuard computes everything)
-        uint128 newRate = _depositAndAdjustFlowRate(cfg, available);
-
         // Record last processed timestamp
         _lastProcessedTimestamp = block.timestamp;
 
         _emitKeeperExecuted(
-            vaultAllocation, safeBalance, cfg.minResidual, available, interest,
-            guard.apr(), guard.holdingPeriod(), principal, fee, interest, newRate
+            vaultAllocation, safeBalance, cfg.minResidual, available, uint256(interest),
+            guard.apr(), guard.holdingPeriod(), principal, fee, newRate
         );
-    }
-
-    /// @notice Deposit yield into the flow stream and increase the streaming rate via FlowGuard
-    /// @dev Delegates to the FlowGuard module, which computes interest from the loanAmount,
-    ///      deposits it, and adjusts the rate.
-    /// @param cfg Keeper configuration
-    /// @param loanAmount The total loan amount (FlowGuard derives interest from this)
-    /// @return newRate The new rate per second in UD21x18 format
-    function _depositAndAdjustFlowRate(FlowKeeperConfig memory cfg, uint256 loanAmount)
-        internal
-        returns (uint128 newRate)
-    {
-        FlowGuard guard = FlowGuard(cfg.flowGuard);
-        guard.increaseRate(loanAmount);
-
-        // Read back the new rate for the event
-        newRate = uint128(UD21x18.unwrap(ISablierFlow(address(guard.FLOW())).getRatePerSecond(guard.STREAM_ID())));
     }
 
     /// @notice Emit the KeeperExecuted event (extracted to avoid stack-too-deep)
@@ -247,7 +222,6 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
         uint256 holdingPeriod,
         uint256 principal,
         uint256 fee,
-        uint256 streamAmount,
         uint128 newRatePerSecond
     ) internal {
         emit KeeperExecuted(
@@ -261,7 +235,6 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
             holdingPeriod,
             principal,
             fee,
-            streamAmount,
             newRatePerSecond
         );
     }

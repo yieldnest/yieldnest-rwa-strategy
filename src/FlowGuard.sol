@@ -123,14 +123,20 @@ contract FlowGuard is AccessControlEnumerable {
     ///      Interest is computed as: loanAmount * apr * holdingPeriod / SECONDS_PER_YEAR / PRECISION.
     ///      Rate delta is computed from the interest amount spread over the holding period.
     /// @param loanAmount The total loan amount from which interest is derived
-    function increaseRate(uint256 loanAmount) external onlyRole(OPERATOR_ROLE) {
+    /// @return depositAmount The interest amount deposited into the stream
+    /// @return newRate The new rate per second after the increase
+    function increaseRate(uint256 loanAmount)
+        external
+        onlyRole(OPERATOR_ROLE)
+        returns (uint128 depositAmount, uint128 newRate)
+    {
         if (loanAmount == 0) revert ZeroLoanAmount();
 
         uint256 interest = computeInterest(loanAmount);
         if (interest == 0) revert ZeroInterest();
         if (interest > type(uint128).max) revert InterestExceedsUint128(interest);
 
-        uint128 depositAmount = uint128(interest);
+        depositAmount = uint128(interest);
 
         // Compute rate delta: UD21x18 rate = (interest * 1e18) / (holdingPeriod * 10^decimals)
         uint128 rateDelta =
@@ -145,7 +151,7 @@ contract FlowGuard is AccessControlEnumerable {
         uint128 currentRate = uint128(UD21x18.unwrap(FLOW.getRatePerSecond(STREAM_ID)));
         if (currentRate == 0) revert StreamIsPaused();
 
-        uint128 newRate = currentRate + rateDelta;
+        newRate = currentRate + rateDelta;
 
         // Enforce max absolute rate
         if (maxRate > 0 && newRate > maxRate) {

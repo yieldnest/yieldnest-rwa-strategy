@@ -544,7 +544,7 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         // We just check that the event is emitted (checking all params is brittle due to rate computation)
         vm.expectEmit(true, false, false, false);
         emit IFlowStrategyKeeper.KeeperExecuted(
-            block.timestamp, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+            block.timestamp, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
         );
 
         vm.prank(powerKeeperBot);

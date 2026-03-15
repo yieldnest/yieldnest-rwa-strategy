@@ -56,6 +56,10 @@ And that fee is added on top of the interest communicated by the FlowGuard.
 
 So the fee is 1.1% that's 11% /10. the fraction is 10 for this new approach to work.
 
+### Important: FlowStrategyKeeper must pass `available` (the full loanAmount) to FlowGuard
+
+When calling `FlowGuard.increaseRate()`, the keeper must pass the original `available` amount — NOT the `principal` (which has interest and fee subtracted). The FlowGuard recomputes interest internally from the loanAmount. Passing `principal` instead would result in a completely different (smaller) interest calculation, breaking the expected yield holdback.
+
 ## Test - Just the Sablier Flow system on its own
 
 Write a test that verifies sall this behaviour for a sablier FLOW stream on its own.
