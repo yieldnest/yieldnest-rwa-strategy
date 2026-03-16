@@ -7,6 +7,7 @@ import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.so
 
 import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
 import {ISablierFlow, UD21x18} from "src/interfaces/sablier/ISablierFlow.sol";
+import {FlowMath} from "src/FlowMath.sol";
 
 /// @title FlowHandler
 /// @notice Upgradeable Safe module that wraps Sablier Flow stream operations with guard rails.
@@ -19,12 +20,6 @@ import {ISablierFlow, UD21x18} from "src/interfaces/sablier/ISablierFlow.sol";
 contract FlowHandler is AccessControlEnumerableUpgradeable {
     /// @notice Role that can call increaseRate (e.g. the FlowStrategyKeeper)
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
-
-    /// @notice Precision for percentage calculations (1e18 = 100%)
-    uint256 public constant PRECISION = 1e18;
-
-    /// @notice Seconds per year for APR calculation (365 days)
-    uint256 public constant SECONDS_PER_YEAR = 365 days;
 
     /// @notice Gnosis Safe that owns the stream
     address public safe;
@@ -57,13 +52,6 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     uint128 public maxRate;
 
     error SafeExecutionFailed();
-    error RateDeltaExceedsMax(uint128 delta, uint128 max);
-    error RateExceedsMax(uint128 newRate, uint128 max);
-    error ZeroLoanAmount();
-    error ZeroInterest();
-    error InterestExceedsUint128(uint256 interest);
-    error ZeroRateDelta();
-    error StreamIsPaused();
     error InvalidHoldingPeriod();
     error InvalidApr();
 
@@ -95,7 +83,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     /// @notice Initialize the FlowHandler
     /// @param params Initialization parameters
     function initialize(InitParams calldata params) external initializer {
-        if (params.apr == 0 || params.apr > PRECISION) revert InvalidApr();
+        if (params.apr == 0 || params.apr > FlowMath.PRECISION) revert InvalidApr();
         if (params.holdingPeriod == 0) revert InvalidHoldingPeriod();
 
         __AccessControlEnumerable_init();
@@ -118,52 +106,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     /// @param loanAmount The total loan amount
     /// @return interest The interest amount (without fees)
     function computeInterest(uint256 loanAmount) public view returns (uint256) {
-        return _computeInterest(loanAmount, apr, holdingPeriod);
-    }
-
-    /// @notice Pure math: compute interest, rate delta, and new rate from all inputs
-    /// @dev Validates all invariants. Reverts on zero amounts, overflow, or limit breaches.
-    /// @param loanAmount The total loan amount from which interest is derived
-    /// @param currentRate The current stream rate (UD21x18 unwrapped)
-    /// @param _apr APR (1e18 = 100%)
-    /// @param _holdingPeriod Duration in seconds over which interest is spread
-    /// @param _tokenDecimals Token decimals for UD21x18 conversion
-    /// @param _maxRateDelta Maximum allowed rate increase per call (0 = unlimited)
-    /// @param _maxRate Maximum allowed absolute rate (0 = unlimited)
-    /// @return depositAmount The interest amount to deposit into the stream
-    /// @return rateDelta The rate increase (UD21x18 unwrapped)
-    /// @return newRate The resulting rate after the increase
-    function calculateRateIncrease(
-        uint256 loanAmount,
-        uint128 currentRate,
-        uint256 _apr,
-        uint256 _holdingPeriod,
-        uint8 _tokenDecimals,
-        uint128 _maxRateDelta,
-        uint128 _maxRate
-    ) public pure returns (uint128 depositAmount, uint128 rateDelta, uint128 newRate) {
-        if (loanAmount == 0) revert ZeroLoanAmount();
-
-        uint256 interest = _computeInterest(loanAmount, _apr, _holdingPeriod);
-        if (interest == 0) revert ZeroInterest();
-        if (interest > type(uint128).max) revert InterestExceedsUint128(interest);
-
-        depositAmount = uint128(interest);
-
-        rateDelta = uint128((interest * 1e18) / (_holdingPeriod * (10 ** _tokenDecimals)));
-        if (rateDelta == 0) revert ZeroRateDelta();
-
-        if (_maxRateDelta > 0 && rateDelta > _maxRateDelta) {
-            revert RateDeltaExceedsMax(rateDelta, _maxRateDelta);
-        }
-
-        if (currentRate == 0) revert StreamIsPaused();
-
-        newRate = currentRate + rateDelta;
-
-        if (_maxRate > 0 && newRate > _maxRate) {
-            revert RateExceedsMax(newRate, _maxRate);
-        }
+        return FlowMath.computeInterest(loanAmount, apr, holdingPeriod);
     }
 
     /// @notice Given a loanAmount, compute interest, deposit it into the stream, and increase the rate
@@ -179,8 +122,9 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
         uint128 currentRate = uint128(UD21x18.unwrap(ISablierFlow(flow).getRatePerSecond(streamId)));
 
         uint128 rateDelta;
-        (depositAmount, rateDelta, newRate) =
-            calculateRateIncrease(loanAmount, currentRate, apr, holdingPeriod, tokenDecimals, maxRateDelta, maxRate);
+        (depositAmount, rateDelta, newRate) = FlowMath.calculateRateIncrease(
+            loanAmount, currentRate, apr, holdingPeriod, tokenDecimals, maxRateDelta, maxRate
+        );
 
         // Approve Sablier Flow to spend token from Safe
         _executeSafe(token, abi.encodeCall(IERC20.approve, (flow, depositAmount)));
@@ -195,15 +139,6 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
         );
 
         emit RateIncreased(currentRate, newRate, depositAmount, loanAmount);
-    }
-
-    /// @notice Pure interest calculation
-    function _computeInterest(uint256 loanAmount, uint256 _apr, uint256 _holdingPeriod)
-        internal
-        pure
-        returns (uint256)
-    {
-        return (loanAmount * _apr * _holdingPeriod) / SECONDS_PER_YEAR / PRECISION;
     }
 
     /// @notice Pause the stream in an emergency
@@ -233,7 +168,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     /// @notice Update the APR
     /// @param _apr New APR (1e18 = 100%)
     function setApr(uint256 _apr) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (_apr == 0 || _apr > PRECISION) revert InvalidApr();
+        if (_apr == 0 || _apr > FlowMath.PRECISION) revert InvalidApr();
         apr = _apr;
         emit AprUpdated(_apr);
     }
