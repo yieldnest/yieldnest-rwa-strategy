@@ -1,21 +1,22 @@
 // SPDX-License-Identifier: BSD-3-Clause
 pragma solidity ^0.8.28;
 
-import {AccessControlEnumerable} from
-    "lib/openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol";
+import {AccessControlEnumerableUpgradeable} from
+    "lib/openzeppelin-contracts-upgradeable/contracts/access/extensions/AccessControlEnumerableUpgradeable.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
 import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
 import {ISablierFlow, UD21x18} from "src/interfaces/sablier/ISablierFlow.sol";
 
-/// @title FlowGuard
-/// @notice Safe module that wraps Sablier Flow stream operations with guard rails.
+/// @title FlowHandler
+/// @notice Upgradeable Safe module that wraps Sablier Flow stream operations with guard rails.
 ///         The Safe remains the stream sender; this module controls what callers can do:
 ///         - `increaseRate`: given a loanAmount, computes interest, deposits it, and increases the rate
 ///         - Rate increases are bounded by a max delta and max absolute rate
 ///         - Pause, decrease, refund, and void are blocked for OPERATOR_ROLE callers
 ///         - ADMIN_ROLE can pause the stream in emergencies
-contract FlowGuard is AccessControlEnumerable {
+/// @dev Deployed behind a TransparentUpgradeableProxy.
+contract FlowHandler is AccessControlEnumerableUpgradeable {
     /// @notice Role that can call increaseRate (e.g. the FlowStrategyKeeper)
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 
@@ -26,22 +27,22 @@ contract FlowGuard is AccessControlEnumerable {
     uint256 public constant SECONDS_PER_YEAR = 365 days;
 
     /// @notice Gnosis Safe that owns the stream
-    address public immutable SAFE;
+    address public safe;
 
     /// @notice Sablier Flow contract
-    ISablierFlow public immutable FLOW;
+    address public flow;
 
     /// @notice The stream ID this guard controls
-    uint256 public immutable STREAM_ID;
+    uint256 public streamId;
 
     /// @notice The token being streamed
-    IERC20 public immutable TOKEN;
+    address public token;
 
     /// @notice The stream recipient
-    address public immutable STREAM_RECIPIENT;
+    address public streamRecipient;
 
-    /// @notice Token decimals, read from Sablier Flow at construction
-    uint8 public immutable TOKEN_DECIMALS;
+    /// @notice Token decimals, read from Sablier Flow at initialization
+    uint8 public tokenDecimals;
 
     /// @notice APR for interest calculation (1e18 = 100%)
     uint256 public apr;
@@ -72,43 +73,45 @@ contract FlowGuard is AccessControlEnumerable {
     event HoldingPeriodUpdated(uint256 holdingPeriod);
     event AprUpdated(uint256 apr);
 
-    /// @param _admin Admin address (DEFAULT_ADMIN_ROLE)
-    /// @param _safe Gnosis Safe that is the stream sender
-    /// @param _flow Sablier Flow contract address
-    /// @param _streamId Pre-existing stream ID owned by the Safe
-    /// @param _token The ERC-20 token being streamed
-    /// @param _streamRecipient The stream recipient address
-    /// @param _apr APR for interest calculation (1e18 = 100%)
-    /// @param _holdingPeriod Duration in seconds over which each deposit's rate is spread
-    /// @param _maxRateDelta Maximum rate delta per call (0 = unlimited)
-    /// @param _maxRate Maximum absolute rate (0 = unlimited)
-    constructor(
-        address _admin,
-        address _safe,
-        address _flow,
-        uint256 _streamId,
-        address _token,
-        address _streamRecipient,
-        uint256 _apr,
-        uint256 _holdingPeriod,
-        uint128 _maxRateDelta,
-        uint128 _maxRate
-    ) {
-        if (_apr == 0 || _apr > PRECISION) revert InvalidApr();
-        if (_holdingPeriod == 0) revert InvalidHoldingPeriod();
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
 
-        _grantRole(DEFAULT_ADMIN_ROLE, _admin);
+    /// @notice Initialization parameters for the FlowHandler
+    struct InitParams {
+        address admin; // Admin address (DEFAULT_ADMIN_ROLE)
+        address safe; // Gnosis Safe that is the stream sender
+        address flow; // Sablier Flow contract address
+        uint256 streamId; // Pre-existing stream ID owned by the Safe
+        address token; // The ERC-20 token being streamed
+        address streamRecipient; // The stream recipient address
+        uint256 apr; // APR for interest calculation (1e18 = 100%)
+        uint256 holdingPeriod; // Duration in seconds over which each deposit's rate is spread
+        uint128 maxRateDelta; // Maximum rate delta per call (0 = unlimited)
+        uint128 maxRate; // Maximum absolute rate (0 = unlimited)
+    }
 
-        SAFE = _safe;
-        FLOW = ISablierFlow(_flow);
-        STREAM_ID = _streamId;
-        TOKEN = IERC20(_token);
-        STREAM_RECIPIENT = _streamRecipient;
-        TOKEN_DECIMALS = ISablierFlow(_flow).getTokenDecimals(_streamId);
-        apr = _apr;
-        holdingPeriod = _holdingPeriod;
-        maxRateDelta = _maxRateDelta;
-        maxRate = _maxRate;
+    /// @notice Initialize the FlowHandler
+    /// @param params Initialization parameters
+    function initialize(InitParams calldata params) external initializer {
+        if (params.apr == 0 || params.apr > PRECISION) revert InvalidApr();
+        if (params.holdingPeriod == 0) revert InvalidHoldingPeriod();
+
+        __AccessControlEnumerable_init();
+
+        _grantRole(DEFAULT_ADMIN_ROLE, params.admin);
+
+        safe = params.safe;
+        flow = params.flow;
+        streamId = params.streamId;
+        token = params.token;
+        streamRecipient = params.streamRecipient;
+        tokenDecimals = ISablierFlow(params.flow).getTokenDecimals(params.streamId);
+        apr = params.apr;
+        holdingPeriod = params.holdingPeriod;
+        maxRateDelta = params.maxRateDelta;
+        maxRate = params.maxRate;
     }
 
     /// @notice Compute the interest for a given loan amount
@@ -140,7 +143,7 @@ contract FlowGuard is AccessControlEnumerable {
 
         // Compute rate delta: UD21x18 rate = (interest * 1e18) / (holdingPeriod * 10^decimals)
         uint128 rateDelta =
-            uint128((interest * 1e18) / (holdingPeriod * (10 ** TOKEN_DECIMALS)));
+            uint128((interest * 1e18) / (holdingPeriod * (10 ** tokenDecimals)));
         if (rateDelta == 0) revert ZeroRateDelta();
 
         // Enforce max delta
@@ -148,7 +151,7 @@ contract FlowGuard is AccessControlEnumerable {
             revert RateDeltaExceedsMax(rateDelta, maxRateDelta);
         }
 
-        uint128 currentRate = uint128(UD21x18.unwrap(FLOW.getRatePerSecond(STREAM_ID)));
+        uint128 currentRate = uint128(UD21x18.unwrap(ISablierFlow(flow).getRatePerSecond(streamId)));
         if (currentRate == 0) revert StreamIsPaused();
 
         newRate = currentRate + rateDelta;
@@ -159,15 +162,15 @@ contract FlowGuard is AccessControlEnumerable {
         }
 
         // Approve Sablier Flow to spend token from Safe
-        _executeSafe(address(TOKEN), abi.encodeCall(IERC20.approve, (address(FLOW), depositAmount)));
+        _executeSafe(token, abi.encodeCall(IERC20.approve, (flow, depositAmount)));
 
         // Deposit first, then adjust rate
         _executeSafe(
-            address(FLOW),
-            abi.encodeCall(ISablierFlow.deposit, (STREAM_ID, depositAmount, SAFE, STREAM_RECIPIENT))
+            flow,
+            abi.encodeCall(ISablierFlow.deposit, (streamId, depositAmount, safe, streamRecipient))
         );
         _executeSafe(
-            address(FLOW), abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(newRate)))
+            flow, abi.encodeCall(ISablierFlow.adjustRatePerSecond, (streamId, UD21x18.wrap(newRate)))
         );
 
         emit RateIncreased(currentRate, newRate, depositAmount, loanAmount);
@@ -176,7 +179,7 @@ contract FlowGuard is AccessControlEnumerable {
     /// @notice Pause the stream in an emergency
     /// @dev Only callable by DEFAULT_ADMIN_ROLE
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _executeSafe(address(FLOW), abi.encodeCall(ISablierFlow.pause, (STREAM_ID)));
+        _executeSafe(flow, abi.encodeCall(ISablierFlow.pause, (streamId)));
         emit StreamPaused();
     }
 
@@ -208,7 +211,7 @@ contract FlowGuard is AccessControlEnumerable {
     /// @notice Execute a call through the Safe as a module
     function _executeSafe(address to, bytes memory data) internal {
         bool success =
-            IGnosisSafe(SAFE).execTransactionFromModule(to, 0, data, IGnosisSafe.Operation.Call);
+            IGnosisSafe(safe).execTransactionFromModule(to, 0, data, IGnosisSafe.Operation.Call);
         if (!success) revert SafeExecutionFailed();
     }
 }

@@ -7,9 +7,11 @@ import {Safe} from "lib/safe-smart-account/contracts/Safe.sol";
 import {SafeProxyFactory} from "lib/safe-smart-account/contracts/proxies/SafeProxyFactory.sol";
 import {SafeProxy} from "lib/safe-smart-account/contracts/proxies/SafeProxy.sol";
 import {Enum} from "lib/safe-smart-account/contracts/libraries/Enum.sol";
+import {TransparentUpgradeableProxy} from
+    "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 import {FlowStrategyKeeper, IFlowStrategyKeeper} from "src/FlowStrategyKeeper.sol";
-import {FlowGuard} from "src/FlowGuard.sol";
+import {FlowHandler} from "src/FlowHandler.sol";
 import {ISablierFlow, UD21x18} from "src/interfaces/sablier/ISablierFlow.sol";
 import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
 import {MainnetKeeperContracts} from "@script/Contracts.sol";
@@ -21,7 +23,7 @@ import {MainnetKeeperContracts} from "@script/Contracts.sol";
 ///         different deposit sizes, late top-up (insolvency recovery), and withdrawal verification.
 contract FlowStrategyKeeperIntegrationTest is Test {
     FlowStrategyKeeper public keeper;
-    FlowGuard public flowGuard;
+    FlowHandler public flowHandler;
     ISablierFlow public sablierFlow;
     IERC20 public usdc;
     Safe public safe;
@@ -34,6 +36,7 @@ contract FlowStrategyKeeperIntegrationTest is Test {
     address public borrower = address(0x6666);
     address public feeWallet = address(0x7777);
     address public streamReceiver = address(0x8888);
+    address public proxyAdmin = address(0x9999);
 
     // EOA owner for the Safe
     uint256 public eoaOwnerPk = 0xA11CE;
@@ -81,27 +84,36 @@ contract FlowStrategyKeeperIntegrationTest is Test {
             address(safe), streamReceiver, UD21x18.wrap(initialRate), uint40(block.timestamp), usdc, true
         );
 
-        // Deploy FlowGuard with APR (no rate limits for basic tests)
-        flowGuard = new FlowGuard(
-            address(this), // admin
-            address(safe),
-            address(sablierFlow),
-            streamId,
-            address(usdc),
-            streamReceiver,
-            APR,
-            HOLDING_PERIOD,
-            0, // maxRateDelta (unlimited)
-            0 // maxRate (unlimited)
+        // Deploy FlowHandler behind TransparentUpgradeableProxy
+        FlowHandler flowHandlerImpl = new FlowHandler();
+        bytes memory initData = abi.encodeCall(
+            FlowHandler.initialize,
+            (
+                FlowHandler.InitParams({
+                    admin: address(this),
+                    safe: address(safe),
+                    flow: address(sablierFlow),
+                    streamId: streamId,
+                    token: address(usdc),
+                    streamRecipient: streamReceiver,
+                    apr: APR,
+                    holdingPeriod: HOLDING_PERIOD,
+                    maxRateDelta: 0, // unlimited
+                    maxRate: 0 // unlimited
+                })
+            )
         );
+        TransparentUpgradeableProxy proxy =
+            new TransparentUpgradeableProxy(address(flowHandlerImpl), proxyAdmin, initData);
+        flowHandler = FlowHandler(address(proxy));
 
-        // Enable FlowGuard as a module on the Safe (it executes stream ops through Safe)
-        _enableModuleOnSafe(address(flowGuard));
+        // Enable FlowHandler proxy as a module on the Safe (it executes stream ops through Safe)
+        _enableModuleOnSafe(address(flowHandler));
 
         // Deploy FlowStrategyKeeper
         keeper = new FlowStrategyKeeper(address(this), address(this), admin, keeperBot);
 
-        // Initialize with config (no apr/holdingPeriod - those are in FlowGuard)
+        // Initialize with config (no apr/holdingPeriod - those are in FlowHandler)
         keeper.initialize(
             IFlowStrategyKeeper.FlowKeeperConfig({
                 vault: vault,
@@ -110,7 +122,7 @@ contract FlowStrategyKeeperIntegrationTest is Test {
                 baseAsset: address(usdc),
                 borrower: borrower,
                 feeWallet: feeWallet,
-                flowGuard: address(flowGuard),
+                flowHandler: address(flowHandler),
                 minThreshold: MIN_THRESHOLD,
                 minResidual: MIN_RESIDUAL,
                 minProcessingPercent: 0.01e18,
@@ -118,8 +130,8 @@ contract FlowStrategyKeeperIntegrationTest is Test {
             })
         );
 
-        // Grant keeper OPERATOR_ROLE on FlowGuard
-        flowGuard.grantRole(flowGuard.OPERATOR_ROLE(), address(keeper));
+        // Grant keeper OPERATOR_ROLE on FlowHandler
+        flowHandler.grantRole(flowHandler.OPERATOR_ROLE(), address(keeper));
 
         // Separate KEEPER_ROLE and POWER_KEEPER_ROLE onto different addresses
         keeper.grantRole(keeper.POWER_KEEPER_ROLE(), powerKeeperBot);
@@ -133,9 +145,9 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         keeper.grantRole(keeper.CONFIG_MANAGER_ROLE(), admin);
         keeper.grantRole(keeper.PAUSER_ROLE(), admin);
 
-        // Transfer FlowGuard admin to admin
-        flowGuard.grantRole(flowGuard.DEFAULT_ADMIN_ROLE(), admin);
-        flowGuard.renounceRole(flowGuard.DEFAULT_ADMIN_ROLE(), address(this));
+        // Transfer FlowHandler admin to admin
+        flowHandler.grantRole(flowHandler.DEFAULT_ADMIN_ROLE(), admin);
+        flowHandler.renounceRole(flowHandler.DEFAULT_ADMIN_ROLE(), address(this));
 
         // Renounce test contract's roles
         keeper.renounceRole(keeper.PAUSER_ROLE(), address(this));
@@ -168,6 +180,10 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         assertTrue(safe.isModuleEnabled(address(keeper)), "Keeper should be enabled as module");
     }
 
+    function test_flowHandlerIsProxy() public view {
+        assertTrue(safe.isModuleEnabled(address(flowHandler)), "FlowHandler proxy should be enabled as module");
+    }
+
     function test_streamExists() public view {
         assertTrue(sablierFlow.isStream(streamId), "Stream should exist");
         assertEq(sablierFlow.getSender(streamId), address(safe), "Stream sender should be Safe");
@@ -180,10 +196,10 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         assertEq(cfg.safe, address(safe));
         assertEq(cfg.borrower, borrower);
         assertEq(cfg.feeWallet, feeWallet);
-        assertEq(cfg.flowGuard, address(flowGuard));
-        assertEq(flowGuard.TOKEN_DECIMALS(), TOKEN_DECIMALS);
-        assertEq(flowGuard.apr(), APR);
-        assertEq(flowGuard.holdingPeriod(), HOLDING_PERIOD);
+        assertEq(cfg.flowHandler, address(flowHandler));
+        assertEq(flowHandler.tokenDecimals(), TOKEN_DECIMALS);
+        assertEq(flowHandler.apr(), APR);
+        assertEq(flowHandler.holdingPeriod(), HOLDING_PERIOD);
         assertEq(cfg.feeFraction, FEE_FRACTION);
     }
 
@@ -192,8 +208,8 @@ contract FlowStrategyKeeperIntegrationTest is Test {
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Test basic processInflows: principal -> borrower, fee -> feeWallet, yield -> flow stream
-    /// @dev With new FlowGuard architecture:
-    ///      - interest = available * APR * holdingPeriod / year (FlowGuard computes)
+    /// @dev With FlowHandler architecture:
+    ///      - interest = available * APR * holdingPeriod / year (FlowHandler computes)
     ///      - fee = interest / feeFraction (on top of interest)
     ///      - principal = available - interest - fee
     ///      - stream receives full interest amount

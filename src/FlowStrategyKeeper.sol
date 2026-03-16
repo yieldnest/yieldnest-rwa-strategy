@@ -10,7 +10,7 @@ import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.so
 import {IERC4626} from "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 
 import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
-import {FlowGuard} from "src/FlowGuard.sol";
+import {FlowHandler} from "src/FlowHandler.sol";
 
 /// @title IFlowStrategyKeeper
 /// @notice Interface for the FlowStrategyKeeper contract
@@ -23,7 +23,7 @@ interface IFlowStrategyKeeper {
         address baseAsset; // The base asset (e.g., USDC)
         address borrower; // Address to receive principal
         address feeWallet; // Address to receive fee (interest / feeFraction)
-        address flowGuard; // FlowGuard module that wraps Sablier Flow stream operations
+        address flowHandler; // FlowHandler module that wraps Sablier Flow stream operations
         uint256 minThreshold; // Minimum vault balance to trigger allocation
         uint256 minResidual; // Minimum to keep in Safe after disbursement
         uint256 minProcessingPercent; // Min % of vault total for time-based fallback (1e18 = 100%)
@@ -56,8 +56,8 @@ interface IFlowStrategyKeeper {
 /// @notice Keeper contract that monitors vault balances, allocates to strategy,
 ///         and disburses funds from the Safe with yield holdback via a Sablier Flow stream.
 /// @dev Deployed directly (no proxy). Must be registered as a module on the Gnosis Safe.
-///      Interest calculation is delegated to the FlowGuard, which knows about APR and holding period.
-///      The keeper queries FlowGuard for interest, then computes fee on top (interest / feeFraction).
+///      Interest calculation is delegated to the FlowHandler, which knows about APR and holding period.
+///      The keeper queries FlowHandler for interest, then computes fee on top (interest / feeFraction).
 ///      Each deposit appends an additional rate on top of the current rate.
 contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, ReentrancyGuard, Pausable, Initializable {
     /// @notice Role required to call the keeper function (on-chain computed parameters)
@@ -173,11 +173,11 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
     }
 
     /// @notice Common inflow execution logic shared by both processInflows variants
-    /// @dev FlowGuard computes interest and deposits it into the stream in a single call.
-    ///      Fee is computed on top of the interest returned by FlowGuard.
+    /// @dev FlowHandler computes interest and deposits it into the stream in a single call.
+    ///      Fee is computed on top of the interest returned by FlowHandler.
     /// @param cfg Keeper configuration
     /// @param vaultAllocation Amount allocated from vault (for event)
-    /// @param available Amount of safe funds to disburse (loanAmount passed to FlowGuard)
+    /// @param available Amount of safe funds to disburse (loanAmount passed to FlowHandler)
     /// @param safeBalance Safe balance after allocation (for event)
     function _executeInflows(
         FlowKeeperConfig memory cfg,
@@ -185,9 +185,9 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
         uint256 available,
         uint256 safeBalance
     ) internal {
-        FlowGuard guard = FlowGuard(cfg.flowGuard);
+        FlowHandler guard = FlowHandler(cfg.flowHandler);
 
-        // FlowGuard computes interest from available, deposits it, adjusts rate, returns both
+        // FlowHandler computes interest from available, deposits it, adjusts rate, returns both
         (uint128 interest, uint128 newRate) = guard.increaseRate(available);
 
         // Fee is on top of interest: fee = interest / feeFraction
@@ -346,7 +346,7 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
         if (config_.baseAsset == address(0)) revert ZeroAddress();
         if (config_.borrower == address(0)) revert ZeroAddress();
         if (config_.feeWallet == address(0)) revert ZeroAddress();
-        if (config_.flowGuard == address(0)) revert ZeroAddress();
+        if (config_.flowHandler == address(0)) revert ZeroAddress();
         if (config_.minProcessingPercent > PRECISION) revert InvalidConfiguration();
         if (config_.feeFraction < 2) revert InvalidConfiguration();
 
