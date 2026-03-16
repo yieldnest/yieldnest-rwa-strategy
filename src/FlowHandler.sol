@@ -118,13 +118,56 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     /// @param loanAmount The total loan amount
     /// @return interest The interest amount (without fees)
     function computeInterest(uint256 loanAmount) public view returns (uint256) {
-        return (loanAmount * apr * holdingPeriod) / SECONDS_PER_YEAR / PRECISION;
+        return _computeInterest(loanAmount, apr, holdingPeriod);
+    }
+
+    /// @notice Pure math: compute interest, rate delta, and new rate from all inputs
+    /// @dev Validates all invariants. Reverts on zero amounts, overflow, or limit breaches.
+    /// @param loanAmount The total loan amount from which interest is derived
+    /// @param currentRate The current stream rate (UD21x18 unwrapped)
+    /// @param _apr APR (1e18 = 100%)
+    /// @param _holdingPeriod Duration in seconds over which interest is spread
+    /// @param _tokenDecimals Token decimals for UD21x18 conversion
+    /// @param _maxRateDelta Maximum allowed rate increase per call (0 = unlimited)
+    /// @param _maxRate Maximum allowed absolute rate (0 = unlimited)
+    /// @return depositAmount The interest amount to deposit into the stream
+    /// @return rateDelta The rate increase (UD21x18 unwrapped)
+    /// @return newRate The resulting rate after the increase
+    function calculateRateIncrease(
+        uint256 loanAmount,
+        uint128 currentRate,
+        uint256 _apr,
+        uint256 _holdingPeriod,
+        uint8 _tokenDecimals,
+        uint128 _maxRateDelta,
+        uint128 _maxRate
+    ) public pure returns (uint128 depositAmount, uint128 rateDelta, uint128 newRate) {
+        if (loanAmount == 0) revert ZeroLoanAmount();
+
+        uint256 interest = _computeInterest(loanAmount, _apr, _holdingPeriod);
+        if (interest == 0) revert ZeroInterest();
+        if (interest > type(uint128).max) revert InterestExceedsUint128(interest);
+
+        depositAmount = uint128(interest);
+
+        rateDelta = uint128((interest * 1e18) / (_holdingPeriod * (10 ** _tokenDecimals)));
+        if (rateDelta == 0) revert ZeroRateDelta();
+
+        if (_maxRateDelta > 0 && rateDelta > _maxRateDelta) {
+            revert RateDeltaExceedsMax(rateDelta, _maxRateDelta);
+        }
+
+        if (currentRate == 0) revert StreamIsPaused();
+
+        newRate = currentRate + rateDelta;
+
+        if (_maxRate > 0 && newRate > _maxRate) {
+            revert RateExceedsMax(newRate, _maxRate);
+        }
     }
 
     /// @notice Given a loanAmount, compute interest, deposit it into the stream, and increase the rate
     /// @dev Caller must have OPERATOR_ROLE. The rate can only go up, never down.
-    ///      Interest is computed as: loanAmount * apr * holdingPeriod / SECONDS_PER_YEAR / PRECISION.
-    ///      Rate delta is computed from the interest amount spread over the holding period.
     /// @param loanAmount The total loan amount from which interest is derived
     /// @return depositAmount The interest amount deposited into the stream
     /// @return newRate The new rate per second after the increase
@@ -133,33 +176,11 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
         onlyRole(OPERATOR_ROLE)
         returns (uint128 depositAmount, uint128 newRate)
     {
-        if (loanAmount == 0) revert ZeroLoanAmount();
-
-        uint256 interest = computeInterest(loanAmount);
-        if (interest == 0) revert ZeroInterest();
-        if (interest > type(uint128).max) revert InterestExceedsUint128(interest);
-
-        depositAmount = uint128(interest);
-
-        // Compute rate delta: UD21x18 rate = (interest * 1e18) / (holdingPeriod * 10^decimals)
-        uint128 rateDelta =
-            uint128((interest * 1e18) / (holdingPeriod * (10 ** tokenDecimals)));
-        if (rateDelta == 0) revert ZeroRateDelta();
-
-        // Enforce max delta
-        if (maxRateDelta > 0 && rateDelta > maxRateDelta) {
-            revert RateDeltaExceedsMax(rateDelta, maxRateDelta);
-        }
-
         uint128 currentRate = uint128(UD21x18.unwrap(ISablierFlow(flow).getRatePerSecond(streamId)));
-        if (currentRate == 0) revert StreamIsPaused();
 
-        newRate = currentRate + rateDelta;
-
-        // Enforce max absolute rate
-        if (maxRate > 0 && newRate > maxRate) {
-            revert RateExceedsMax(newRate, maxRate);
-        }
+        uint128 rateDelta;
+        (depositAmount, rateDelta, newRate) =
+            calculateRateIncrease(loanAmount, currentRate, apr, holdingPeriod, tokenDecimals, maxRateDelta, maxRate);
 
         // Approve Sablier Flow to spend token from Safe
         _executeSafe(token, abi.encodeCall(IERC20.approve, (flow, depositAmount)));
@@ -174,6 +195,15 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
         );
 
         emit RateIncreased(currentRate, newRate, depositAmount, loanAmount);
+    }
+
+    /// @notice Pure interest calculation
+    function _computeInterest(uint256 loanAmount, uint256 _apr, uint256 _holdingPeriod)
+        internal
+        pure
+        returns (uint256)
+    {
+        return (loanAmount * _apr * _holdingPeriod) / SECONDS_PER_YEAR / PRECISION;
     }
 
     /// @notice Pause the stream in an emergency
