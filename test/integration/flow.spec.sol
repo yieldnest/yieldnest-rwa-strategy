@@ -57,9 +57,8 @@ contract SablierFlowTest is Test {
         // UD21x18: 10_000 * 1e12 = 1e16
         uint128 ratePerSecond = uint128(10_000 * SCALING_FACTOR);
 
-        uint256 id = sablierFlow.create(
-            sender, recipient, UD21x18.wrap(ratePerSecond), uint40(block.timestamp), usdc, true
-        );
+        uint256 id =
+            sablierFlow.create(sender, recipient, UD21x18.wrap(ratePerSecond), uint40(block.timestamp), usdc, true);
 
         assertTrue(sablierFlow.isStream(id), "Stream should exist");
         assertEq(sablierFlow.getSender(id), sender, "Sender should match");
@@ -500,7 +499,9 @@ contract SablierFlowTest is Test {
         // Warp past depletion
         vm.warp(block.timestamp + 200);
         assertTrue(sablierFlow.uncoveredDebtOf(streamId) > 0, "Should be insolvent");
-        assertEq(UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId)), ratePerSecond, "Rate unchanged while insolvent");
+        assertEq(
+            UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId)), ratePerSecond, "Rate unchanged while insolvent"
+        );
 
         // Top up with 500 USDC
         uint128 topUpAmount = 500e6;
@@ -593,7 +594,9 @@ contract SablierFlowTest is Test {
 
         assertEq(UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId)), newRate, "Rate should be updated");
         // Balance = 100 + 500 = 600 USDC (but 50 was streamed before pause)
-        assertEq(sablierFlow.getBalance(streamId), initialDeposit + additionalDeposit, "Balance after restartAndDeposit");
+        assertEq(
+            sablierFlow.getBalance(streamId), initialDeposit + additionalDeposit, "Balance after restartAndDeposit"
+        );
     }
 
     /*//////////////////////////////////////////////////////////////

@@ -69,10 +69,8 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         address[] memory owners = new address[](1);
         owners[0] = eoaOwner;
 
-        bytes memory safeSetupData = abi.encodeCall(
-            Safe.setup,
-            (owners, 1, address(0), "", address(0), address(0), 0, payable(address(0)))
-        );
+        bytes memory safeSetupData =
+            abi.encodeCall(Safe.setup, (owners, 1, address(0), "", address(0), address(0), 0, payable(address(0))));
 
         SafeProxy safeProxy = safeFactory.createProxyWithNonce(address(safeSingleton), safeSetupData, 0);
         safe = Safe(payable(address(safeProxy)));
@@ -559,9 +557,7 @@ contract FlowStrategyKeeperIntegrationTest is Test {
 
         // We just check that the event is emitted (checking all params is brittle due to rate computation)
         vm.expectEmit(true, false, false, false);
-        emit IFlowStrategyKeeper.KeeperExecuted(
-            block.timestamp, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-        );
+        emit IFlowStrategyKeeper.KeeperExecuted(block.timestamp, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 
         vm.prank(powerKeeperBot);
         keeper.processInflows(0, available);

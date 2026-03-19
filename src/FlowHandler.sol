@@ -55,6 +55,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     error InvalidApr();
 
     event RateIncreased(uint128 previousRate, uint128 newRate, uint128 depositAmount, uint256 loanAmount);
+    event RateDecreased(uint128 previousRate, uint128 newRate, uint128 interest, uint256 loanAmount);
     event LimitsUpdated(uint128 maxRateDelta, uint128 maxRate);
     event HoldingPeriodUpdated(uint256 holdingPeriod);
     event AprUpdated(uint256 apr);
@@ -128,15 +129,31 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
         _executeSafe(token, abi.encodeCall(IERC20.approve, (flow, depositAmount)));
 
         // Deposit first, then adjust rate
-        _executeSafe(
-            flow,
-            abi.encodeCall(ISablierFlow.deposit, (streamId, depositAmount, safe, streamRecipient))
-        );
-        _executeSafe(
-            flow, abi.encodeCall(ISablierFlow.adjustRatePerSecond, (streamId, UD21x18.wrap(newRate)))
-        );
+        _executeSafe(flow, abi.encodeCall(ISablierFlow.deposit, (streamId, depositAmount, safe, streamRecipient)));
+        _executeSafe(flow, abi.encodeCall(ISablierFlow.adjustRatePerSecond, (streamId, UD21x18.wrap(newRate))));
 
         emit RateIncreased(currentRate, newRate, depositAmount, loanAmount);
+    }
+
+    /// @notice Given a repaid loanAmount, compute the rate reduction and adjust the stream down
+    /// @dev Caller must have OPERATOR_ROLE. Only adjusts the rate — does not refund deposited funds.
+    /// @param loanAmount The repaid loan amount from which the rate reduction is derived
+    /// @return interest The interest amount corresponding to the repaid loan
+    /// @return newRate The new rate per second after the decrease
+    function decreaseRate(uint256 loanAmount)
+        external
+        onlyRole(OPERATOR_ROLE)
+        returns (uint128 interest, uint128 newRate)
+    {
+        uint128 currentRate = uint128(UD21x18.unwrap(ISablierFlow(flow).getRatePerSecond(streamId)));
+
+        uint128 rateDelta;
+        (interest, rateDelta, newRate) =
+            FlowMath.calculateRateDecrease(loanAmount, currentRate, apr, holdingPeriod, tokenDecimals, maxRateDelta);
+
+        _executeSafe(flow, abi.encodeCall(ISablierFlow.adjustRatePerSecond, (streamId, UD21x18.wrap(newRate))));
+
+        emit RateDecreased(currentRate, newRate, interest, loanAmount);
     }
 
     /// @notice Update rate limits
@@ -166,8 +183,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
 
     /// @notice Execute a call through the Safe as a module
     function _executeSafe(address to, bytes memory data) internal {
-        bool success =
-            IGnosisSafe(safe).execTransactionFromModule(to, 0, data, IGnosisSafe.Operation.Call);
+        bool success = IGnosisSafe(safe).execTransactionFromModule(to, 0, data, IGnosisSafe.Operation.Call);
         if (!success) revert SafeExecutionFailed();
     }
 }

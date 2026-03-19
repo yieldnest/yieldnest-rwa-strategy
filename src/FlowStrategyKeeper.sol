@@ -59,7 +59,13 @@ interface IFlowStrategyKeeper {
 ///      Interest calculation is delegated to the FlowHandler, which knows about APR and holding period.
 ///      The keeper queries FlowHandler for interest, then computes fee on top (interest / feeFraction).
 ///      Each deposit appends an additional rate on top of the current rate.
-contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, ReentrancyGuard, Pausable, Initializable {
+contract FlowStrategyKeeper is
+    IFlowStrategyKeeper,
+    AccessControlEnumerable,
+    ReentrancyGuard,
+    Pausable,
+    Initializable
+{
     /// @notice Role required to call the keeper function (on-chain computed parameters)
     bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
 
@@ -89,7 +95,6 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
 
     /// @notice Timestamp of last processing
     uint256 private _lastProcessedTimestamp;
-
 
     /// @notice Creates a new FlowStrategyKeeper
     /// @param _admin Admin address that receives DEFAULT_ADMIN_ROLE, CONFIG_MANAGER_ROLE, and PAUSER_ROLE
@@ -206,8 +211,16 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
         _lastProcessedTimestamp = block.timestamp;
 
         _emitKeeperExecuted(
-            vaultAllocation, safeBalance, cfg.minResidual, available, uint256(interest),
-            guard.apr(), guard.holdingPeriod(), principal, fee, newRate
+            vaultAllocation,
+            safeBalance,
+            cfg.minResidual,
+            available,
+            uint256(interest),
+            guard.apr(),
+            guard.holdingPeriod(),
+            principal,
+            fee,
+            newRate
         );
     }
 
@@ -280,7 +293,6 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
     function lastProcessedTimestamp() external view returns (uint256 timestamp) {
         return _lastProcessedTimestamp;
     }
-
 
     /// @notice Allocate funds from vault to strategy via processor
     /// @param cfg Keeper configuration

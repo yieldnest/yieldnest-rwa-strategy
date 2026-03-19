@@ -6,11 +6,7 @@ import {FlowMath} from "src/FlowMath.sol";
 
 /// @notice Thin harness to expose FlowMath internal functions for testing
 contract FlowMathHarness {
-    function computeInterest(uint256 loanAmount, uint256 apr, uint256 holdingPeriod)
-        external
-        pure
-        returns (uint256)
-    {
+    function computeInterest(uint256 loanAmount, uint256 apr, uint256 holdingPeriod) external pure returns (uint256) {
         return FlowMath.computeInterest(loanAmount, apr, holdingPeriod);
     }
 
@@ -26,6 +22,17 @@ contract FlowMathHarness {
         return FlowMath.calculateRateIncrease(
             loanAmount, currentRate, apr, holdingPeriod, tokenDecimals, maxRateDelta, maxRate
         );
+    }
+
+    function calculateRateDecrease(
+        uint256 loanAmount,
+        uint128 currentRate,
+        uint256 apr,
+        uint256 holdingPeriod,
+        uint8 tokenDecimals,
+        uint128 maxRateDelta
+    ) external pure returns (uint128 interest, uint128 rateDelta, uint128 newRate) {
+        return FlowMath.calculateRateDecrease(loanAmount, currentRate, apr, holdingPeriod, tokenDecimals, maxRateDelta);
     }
 }
 
@@ -276,7 +283,7 @@ contract FlowMathTest is Test {
         uint256 interest = math.computeInterest(loan, APR, HOLDING_PERIOD);
         uint128 expectedDelta = uint128((interest * 1e18) / (HOLDING_PERIOD * 1e6));
 
-        (,uint128 rateDelta,) =
+        (, uint128 rateDelta,) =
             math.calculateRateIncrease(loan, 1, APR, HOLDING_PERIOD, USDC_DECIMALS, expectedDelta, 0);
         assertEq(rateDelta, expectedDelta);
     }
@@ -332,8 +339,7 @@ contract FlowMathTest is Test {
         uint256 rateDelta = (interest * 1e18) / (HOLDING_PERIOD * 1e6);
         vm.assume(rateDelta > 0);
 
-        (uint128 deposit,,) =
-            math.calculateRateIncrease(loanAmount, 1, APR, HOLDING_PERIOD, USDC_DECIMALS, 0, 0);
+        (uint128 deposit,,) = math.calculateRateIncrease(loanAmount, 1, APR, HOLDING_PERIOD, USDC_DECIMALS, 0, 0);
         assertEq(deposit, interest, "Deposit should always equal computed interest");
     }
 
@@ -373,11 +379,10 @@ contract FlowMathTest is Test {
     }
 
     /// @notice Fuzz across different APRs and holding periods
-    function testFuzz_calculateRateIncrease_varyParams(
-        uint256 loanAmount,
-        uint256 apr,
-        uint256 holdingPeriod
-    ) public view {
+    function testFuzz_calculateRateIncrease_varyParams(uint256 loanAmount, uint256 apr, uint256 holdingPeriod)
+        public
+        view
+    {
         loanAmount = bound(loanAmount, 1e8, 1e24);
         apr = bound(apr, 0.01e18, 1e18); // 1% to 100%
         holdingPeriod = bound(holdingPeriod, 1 days, 365 days);
@@ -436,5 +441,141 @@ contract FlowMathTest is Test {
 
         // Should not revert with 0 limits
         math.calculateRateIncrease(loanAmount, currentRate, APR, HOLDING_PERIOD, USDC_DECIMALS, 0, 0);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                   calculateRateDecrease — CONCRETE
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Increase then decrease by the same loan amount: rate returns to initial
+    function test_decreaseRate_fullRoundTrip() public view {
+        uint128 initialRate = 1000; // non-trivial starting rate
+        uint256 loan = 100_000e6;
+
+        // Increase
+        (, uint128 increaseDelta, uint128 rateAfterIncrease) =
+            math.calculateRateIncrease(loan, initialRate, APR, HOLDING_PERIOD, USDC_DECIMALS, 0, 0);
+
+        // Decrease by same loan
+        (, uint128 decreaseDelta, uint128 rateAfterDecrease) =
+            math.calculateRateDecrease(loan, rateAfterIncrease, APR, HOLDING_PERIOD, USDC_DECIMALS, 0);
+
+        assertEq(increaseDelta, decreaseDelta, "Deltas should be symmetric");
+        assertEq(rateAfterDecrease, initialRate, "Rate should return to initial");
+    }
+
+    /// @notice Partial repayment: decrease by half the original loan
+    function test_decreaseRate_partialRepayment() public view {
+        uint128 initialRate = 1;
+        uint256 loan = 100_000e6;
+
+        (, uint128 fullDelta, uint128 rateAfterIncrease) =
+            math.calculateRateIncrease(loan, initialRate, APR, HOLDING_PERIOD, USDC_DECIMALS, 0, 0);
+
+        // Repay half
+        (, uint128 halfDelta, uint128 rateAfterDecrease) =
+            math.calculateRateDecrease(loan / 2, rateAfterIncrease, APR, HOLDING_PERIOD, USDC_DECIMALS, 0);
+
+        assertEq(halfDelta, fullDelta / 2, "Half loan should produce half delta");
+        assertEq(rateAfterDecrease, initialRate + fullDelta - halfDelta, "Rate after partial repayment");
+    }
+
+    /// @notice Interest returned by decrease matches computeInterest
+    function test_decreaseRate_interestMatchesCompute() public view {
+        uint256 loan = 100_000e6;
+        // First increase to get a realistic rate, then decrease
+        (,, uint128 currentRate) = math.calculateRateIncrease(loan, 1, APR, HOLDING_PERIOD, USDC_DECIMALS, 0, 0);
+
+        (uint128 interest,,) = math.calculateRateDecrease(loan / 2, currentRate, APR, HOLDING_PERIOD, USDC_DECIMALS, 0);
+
+        uint256 expectedInterest = math.computeInterest(loan / 2, APR, HOLDING_PERIOD);
+        assertEq(interest, expectedInterest, "Decrease interest should match computeInterest");
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                   calculateRateDecrease — REVERT TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    function test_decreaseRate_revert_zeroLoan() public {
+        vm.expectRevert(FlowMath.ZeroLoanAmount.selector);
+        math.calculateRateDecrease(0, 1000, APR, HOLDING_PERIOD, USDC_DECIMALS, 0);
+    }
+
+    function test_decreaseRate_revert_streamPaused() public {
+        vm.expectRevert(FlowMath.StreamIsPaused.selector);
+        math.calculateRateDecrease(100_000e6, 0, APR, HOLDING_PERIOD, USDC_DECIMALS, 0);
+    }
+
+    function test_decreaseRate_revert_rateUnderflow() public {
+        // Rate is 1, decrease would produce a delta >> 1
+        vm.expectRevert();
+        math.calculateRateDecrease(100_000e6, 1, APR, HOLDING_PERIOD, USDC_DECIMALS, 0);
+    }
+
+    function test_decreaseRate_revert_rateDeltaExceedsMax() public {
+        uint256 loan = 100_000e6;
+        uint256 interest = math.computeInterest(loan, APR, HOLDING_PERIOD);
+        uint128 delta = uint128((interest * 1e18) / (HOLDING_PERIOD * 1e6));
+
+        // currentRate high enough to not underflow, but maxRateDelta too low
+        vm.expectRevert();
+        math.calculateRateDecrease(loan, delta + 1000, APR, HOLDING_PERIOD, USDC_DECIMALS, delta - 1);
+    }
+
+    /// @notice Decrease delta == currentRate should revert (would set rate to 0, use pause instead)
+    function test_decreaseRate_revert_exactlyEqualsCurrentRate() public {
+        uint256 loan = 100_000e6;
+        uint256 interest = math.computeInterest(loan, APR, HOLDING_PERIOD);
+        uint128 delta = uint128((interest * 1e18) / (HOLDING_PERIOD * 1e6));
+
+        // Set currentRate = delta exactly → should revert with RateUnderflow
+        vm.expectRevert(abi.encodeWithSelector(FlowMath.RateUnderflow.selector, delta, delta));
+        math.calculateRateDecrease(loan, delta, APR, HOLDING_PERIOD, USDC_DECIMALS, 0);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                   calculateRateDecrease — FUZZ
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Increase then decrease by same amount always returns to initial rate
+    function testFuzz_decreaseRate_roundTrip(uint256 loanAmount, uint128 initialRate) public view {
+        loanAmount = bound(loanAmount, 1e6, 1e24);
+        initialRate = uint128(bound(initialRate, 1, type(uint64).max));
+
+        uint256 interest = math.computeInterest(loanAmount, APR, HOLDING_PERIOD);
+        vm.assume(interest > 0 && interest <= type(uint128).max);
+
+        uint128 delta = uint128((interest * 1e18) / (HOLDING_PERIOD * 1e6));
+        vm.assume(delta > 0);
+        vm.assume(uint256(initialRate) + uint256(delta) <= type(uint128).max);
+
+        (, uint128 increaseDelta, uint128 rateUp) =
+            math.calculateRateIncrease(loanAmount, initialRate, APR, HOLDING_PERIOD, USDC_DECIMALS, 0, 0);
+
+        (, uint128 decreaseDelta, uint128 rateDown) =
+            math.calculateRateDecrease(loanAmount, rateUp, APR, HOLDING_PERIOD, USDC_DECIMALS, 0);
+
+        assertEq(increaseDelta, decreaseDelta, "Deltas must be symmetric");
+        assertEq(rateDown, initialRate, "Rate must return to initial");
+    }
+
+    /// @notice newRate is always strictly less than currentRate after decrease
+    function testFuzz_decreaseRate_rateAlwaysLower(uint256 loanAmount, uint128 currentRate) public view {
+        loanAmount = bound(loanAmount, 1e6, 1e24);
+
+        uint256 interest = math.computeInterest(loanAmount, APR, HOLDING_PERIOD);
+        vm.assume(interest > 0 && interest <= type(uint128).max);
+
+        uint128 delta = uint128((interest * 1e18) / (HOLDING_PERIOD * 1e6));
+        vm.assume(delta > 0);
+
+        // currentRate must be > delta to not underflow
+        currentRate = uint128(bound(currentRate, delta + 1, type(uint128).max));
+
+        (,, uint128 newRate) =
+            math.calculateRateDecrease(loanAmount, currentRate, APR, HOLDING_PERIOD, USDC_DECIMALS, 0);
+
+        assertLt(newRate, currentRate, "Rate must decrease");
+        assertGt(newRate, 0, "Rate must stay positive");
     }
 }
