@@ -346,7 +346,7 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
         // Validate amount fits in uint128 (Sablier requirement)
         if (amount > type(uint128).max) revert StreamAmountExceedsUint128(amount);
 
-        // First approve Sablier to spend the stream amount
+        // Approve Sablier to spend the stream amount
         bytes memory approveData = abi.encodeCall(IERC20.approve, (cfg.sablier, amount));
         _executeSafeTransaction(cfg, cfg.baseAsset, 0, approveData);
 

@@ -14,8 +14,7 @@ import {FlowMath} from "src/FlowMath.sol";
 ///         The Safe remains the stream sender; this module controls what callers can do:
 ///         - `increaseRate`: given a loanAmount, computes interest, deposits it, and increases the rate
 ///         - Rate increases are bounded by a max delta and max absolute rate
-///         - Pause, decrease, refund, and void are blocked for OPERATOR_ROLE callers
-///         - ADMIN_ROLE can pause the stream in emergencies
+///         - Stream pause/void/refund are handled directly by the multisig
 /// @dev Deployed behind a TransparentUpgradeableProxy.
 contract FlowHandler is AccessControlEnumerableUpgradeable {
     /// @notice Role that can call increaseRate (e.g. the FlowStrategyKeeper)
@@ -57,7 +56,6 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
 
     event RateIncreased(uint128 previousRate, uint128 newRate, uint128 depositAmount, uint256 loanAmount);
     event LimitsUpdated(uint128 maxRateDelta, uint128 maxRate);
-    event StreamPaused();
     event HoldingPeriodUpdated(uint256 holdingPeriod);
     event AprUpdated(uint256 apr);
 
@@ -141,13 +139,6 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
         emit RateIncreased(currentRate, newRate, depositAmount, loanAmount);
     }
 
-    /// @notice Pause the stream in an emergency
-    /// @dev Only callable by DEFAULT_ADMIN_ROLE
-    function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _executeSafe(flow, abi.encodeCall(ISablierFlow.pause, (streamId)));
-        emit StreamPaused();
-    }
-
     /// @notice Update rate limits
     /// @param _maxRateDelta New max rate delta per call (0 = unlimited)
     /// @param _maxRate New max absolute rate (0 = unlimited)
@@ -160,7 +151,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     /// @notice Update the holding period
     /// @param _holdingPeriod New duration in seconds
     function setHoldingPeriod(uint256 _holdingPeriod) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (_holdingPeriod == 0) revert InvalidHoldingPeriod();
+        if (_holdingPeriod == 0 || _holdingPeriod > 365 days) revert InvalidHoldingPeriod();
         holdingPeriod = _holdingPeriod;
         emit HoldingPeriodUpdated(_holdingPeriod);
     }
