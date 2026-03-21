@@ -188,21 +188,21 @@ contract FlowStrategyKeeper is
         uint256 available,
         uint256 safeBalance
     ) internal {
-        FlowHandler guard = FlowHandler(cfg.flowHandler);
+        FlowHandler flowHandler = FlowHandler(cfg.flowHandler);
 
         // FlowHandler computes interest from available, deposits it, adjusts rate, returns both
-        (uint128 interest, uint128 newRate) = guard.increaseRate(available);
+        (uint128 interest, uint128 newRate) = flowHandler.increaseRate(available);
 
         // Fee is on top of interest: fee = interest / feeFraction
         uint256 fee = uint256(interest) / cfg.feeFraction;
         uint256 principal = available - uint256(interest) - fee;
 
         // Transfer principal to borrower via FlowHandler (sole Safe module)
-        guard.transferAsset(cfg.borrower, principal);
+        flowHandler.transferAsset(cfg.borrower, principal);
 
         // Transfer fee to fee wallet (skip if zero to avoid wasteful zero-amount transfer)
         if (fee > 0) {
-            guard.transferAsset(cfg.feeWallet, fee);
+            flowHandler.transferAsset(cfg.feeWallet, fee);
         }
 
         // Record last processed timestamp
@@ -214,8 +214,8 @@ contract FlowStrategyKeeper is
             cfg.minResidual,
             available,
             uint256(interest),
-            guard.apr(),
-            guard.holdingPeriod(),
+            flowHandler.apr(),
+            flowHandler.holdingPeriod(),
             principal,
             fee,
             newRate
