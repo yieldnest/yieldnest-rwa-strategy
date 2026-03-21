@@ -97,7 +97,10 @@ contract FlowStrategyKeeperIntegrationTest is Test {
                     apr: APR,
                     holdingPeriod: HOLDING_PERIOD,
                     maxRateDelta: 0, // unlimited
-                    maxRate: 0 // unlimited
+                    maxRate: 0, // unlimited
+                    borrower: borrower,
+                    feeWallet: feeWallet,
+                    feeFraction: FEE_FRACTION
                 })
             )
         );
@@ -111,20 +114,17 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         // Deploy FlowStrategyKeeper
         keeper = new FlowStrategyKeeper(address(this), address(this), admin, keeperBot);
 
-        // Initialize with config (no apr/holdingPeriod - those are in FlowHandler)
+        // Initialize with config (borrower/feeWallet/feeFraction are in FlowHandler)
         keeper.initialize(
             IFlowStrategyKeeper.FlowKeeperConfig({
                 vault: vault,
                 targetStrategy: targetStrategy,
                 safe: address(safe),
                 baseAsset: address(usdc),
-                borrower: borrower,
-                feeWallet: feeWallet,
                 flowHandler: address(flowHandler),
                 minThreshold: MIN_THRESHOLD,
                 minResidual: MIN_RESIDUAL,
-                minProcessingPercent: 0.01e18,
-                feeFraction: FEE_FRACTION
+                minProcessingPercent: 0.01e18
             })
         );
 
@@ -191,13 +191,15 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         IFlowStrategyKeeper.FlowKeeperConfig memory cfg = keeper.getConfig();
         assertEq(cfg.vault, vault);
         assertEq(cfg.safe, address(safe));
-        assertEq(cfg.borrower, borrower);
-        assertEq(cfg.feeWallet, feeWallet);
         assertEq(cfg.flowHandler, address(flowHandler));
+
+        // borrower, feeWallet, feeFraction are on FlowHandler
+        assertEq(flowHandler.borrower(), borrower);
+        assertEq(flowHandler.feeWallet(), feeWallet);
+        assertEq(flowHandler.feeFraction(), FEE_FRACTION);
         assertEq(flowHandler.tokenDecimals(), TOKEN_DECIMALS);
         assertEq(flowHandler.apr(), APR);
         assertEq(flowHandler.holdingPeriod(), HOLDING_PERIOD);
-        assertEq(cfg.feeFraction, FEE_FRACTION);
     }
 
     /*//////////////////////////////////////////////////////////////

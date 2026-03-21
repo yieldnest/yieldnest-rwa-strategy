@@ -20,13 +20,10 @@ interface IFlowStrategyKeeper {
         address targetStrategy; // FlexStrategy to allocate funds to
         address safe; // Gnosis Safe holding the funds (for balance checks)
         address baseAsset; // The base asset (e.g., USDC)
-        address borrower; // Address to receive principal
-        address feeWallet; // Address to receive fee (interest / feeFraction)
-        address flowHandler; // FlowHandler module that wraps Sablier Flow stream operations
+        address flowHandler; // FlowHandler module that handles all Safe operations
         uint256 minThreshold; // Minimum vault balance to trigger allocation
         uint256 minResidual; // Minimum to keep in Safe after disbursement
         uint256 minProcessingPercent; // Min % of vault total for time-based fallback (1e18 = 100%)
-        uint256 feeFraction; // Fee denominator: fee = interest / feeFraction, added on top of interest
     }
 
     error ZeroAddress();
@@ -47,16 +44,15 @@ interface IFlowStrategyKeeper {
         uint256 fee,
         uint128 newRatePerSecond
     );
-    event ConfigUpdated(address indexed vault, address indexed safe, uint256 feeFraction);
+    event ConfigUpdated(address indexed vault, address indexed safe);
 }
 
 /// @title FlowStrategyKeeper
 /// @notice Keeper contract that monitors vault balances, allocates to strategy,
 ///         and disburses funds from the Safe with yield holdback via a Sablier Flow stream.
 /// @dev Deployed directly (no proxy). NOT a Safe module — all Safe interactions go through FlowHandler.
-///      Interest calculation is delegated to the FlowHandler, which knows about APR and holding period.
-///      The keeper queries FlowHandler for interest, then computes fee on top (interest / feeFraction).
-///      Each deposit appends an additional rate on top of the current rate.
+///      Delegates all fund disbursement to FlowHandler.disburse() which handles interest computation,
+///      stream deposit, rate adjustment, and principal/fee transfers.
 contract FlowStrategyKeeper is
     IFlowStrategyKeeper,
     AccessControlEnumerable,
@@ -190,20 +186,8 @@ contract FlowStrategyKeeper is
     ) internal {
         FlowHandler flowHandler = FlowHandler(cfg.flowHandler);
 
-        // FlowHandler computes interest from available, deposits it, adjusts rate, returns both
-        (uint128 interest, uint128 newRate) = flowHandler.increaseRate(available);
-
-        // Fee is on top of interest: fee = interest / feeFraction
-        uint256 fee = uint256(interest) / cfg.feeFraction;
-        uint256 principal = available - uint256(interest) - fee;
-
-        // Transfer principal to borrower via FlowHandler (sole Safe module)
-        flowHandler.transferAsset(cfg.borrower, principal);
-
-        // Transfer fee to fee wallet (skip if zero to avoid wasteful zero-amount transfer)
-        if (fee > 0) {
-            flowHandler.transferAsset(cfg.feeWallet, fee);
-        }
+        // Single call: deposits interest to stream, adjusts rate, transfers principal and fee
+        FlowHandler.DisburseResult memory result = flowHandler.disburse(available);
 
         // Record last processed timestamp
         _lastProcessedTimestamp = block.timestamp;
@@ -213,12 +197,12 @@ contract FlowStrategyKeeper is
             safeBalance,
             cfg.minResidual,
             available,
-            uint256(interest),
+            uint256(result.interest),
             flowHandler.apr(),
             flowHandler.holdingPeriod(),
-            principal,
-            fee,
-            newRate
+            result.principal,
+            result.fee,
+            result.newRate
         );
     }
 
@@ -328,14 +312,11 @@ contract FlowStrategyKeeper is
         if (config_.targetStrategy == address(0)) revert ZeroAddress();
         if (config_.safe == address(0)) revert ZeroAddress();
         if (config_.baseAsset == address(0)) revert ZeroAddress();
-        if (config_.borrower == address(0)) revert ZeroAddress();
-        if (config_.feeWallet == address(0)) revert ZeroAddress();
         if (config_.flowHandler == address(0)) revert ZeroAddress();
         if (config_.minProcessingPercent > PRECISION) revert InvalidConfiguration();
-        if (config_.feeFraction < 2) revert InvalidConfiguration();
 
         _config = config_;
-        emit ConfigUpdated(config_.vault, config_.safe, config_.feeFraction);
+        emit ConfigUpdated(config_.vault, config_.safe);
     }
 
     /// @notice Get the current configuration
