@@ -135,8 +135,7 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         keeper.grantRole(keeper.POWER_KEEPER_ROLE(), powerKeeperBot);
         keeper.revokeRole(keeper.POWER_KEEPER_ROLE(), keeperBot);
 
-        // Enable keeper as a module on the Safe (for principal/fee transfers)
-        _enableModuleOnSafe(address(keeper));
+        // Keeper is NOT a module — it uses FlowHandler.transferAsset() instead
 
         // Transfer admin roles
         keeper.grantRole(keeper.DEFAULT_ADMIN_ROLE(), admin);
@@ -174,8 +173,8 @@ contract FlowStrategyKeeperIntegrationTest is Test {
                             SETUP VERIFICATION
     //////////////////////////////////////////////////////////////*/
 
-    function test_keeperIsModule() public view {
-        assertTrue(safe.isModuleEnabled(address(keeper)), "Keeper should be enabled as module");
+    function test_keeperIsNotModule() public view {
+        assertFalse(safe.isModuleEnabled(address(keeper)), "Keeper should NOT be enabled as module");
     }
 
     function test_flowHandlerIsProxy() public view {

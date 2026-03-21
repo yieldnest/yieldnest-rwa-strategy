@@ -181,6 +181,14 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
         emit AprUpdated(_apr);
     }
 
+    /// @notice Transfer the stream token from the Safe to a recipient
+    /// @dev Caller must have OPERATOR_ROLE. Only transfers the configured token.
+    /// @param to Recipient address
+    /// @param amount Amount to transfer
+    function transferAsset(address to, uint256 amount) external onlyRole(OPERATOR_ROLE) {
+        _executeSafe(token, abi.encodeCall(IERC20.transfer, (to, amount)));
+    }
+
     /// @notice Execute a call through the Safe as a module
     function _executeSafe(address to, bytes memory data) internal {
         bool success = IGnosisSafe(safe).execTransactionFromModule(to, 0, data, IGnosisSafe.Operation.Call);

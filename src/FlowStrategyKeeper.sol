@@ -9,7 +9,6 @@ import {Initializable} from "lib/openzeppelin-contracts/contracts/proxy/utils/In
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 
-import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
 import {FlowHandler} from "src/FlowHandler.sol";
 
 /// @title IFlowStrategyKeeper
@@ -19,7 +18,7 @@ interface IFlowStrategyKeeper {
     struct FlowKeeperConfig {
         address vault; // Vault to monitor for excess baseAsset
         address targetStrategy; // FlexStrategy to allocate funds to
-        address safe; // Gnosis Safe holding the funds (keeper must be enabled as module)
+        address safe; // Gnosis Safe holding the funds (for balance checks)
         address baseAsset; // The base asset (e.g., USDC)
         address borrower; // Address to receive principal
         address feeWallet; // Address to receive fee (interest / feeFraction)
@@ -32,7 +31,6 @@ interface IFlowStrategyKeeper {
 
     error ZeroAddress();
     error InsufficientSafeBalance(uint256 balance, uint256 required);
-    error SafeExecutionFailed();
     error InvalidConfiguration();
     error NoFundsToProcess();
 
@@ -55,7 +53,7 @@ interface IFlowStrategyKeeper {
 /// @title FlowStrategyKeeper
 /// @notice Keeper contract that monitors vault balances, allocates to strategy,
 ///         and disburses funds from the Safe with yield holdback via a Sablier Flow stream.
-/// @dev Deployed directly (no proxy). Must be registered as a module on the Gnosis Safe.
+/// @dev Deployed directly (no proxy). NOT a Safe module — all Safe interactions go through FlowHandler.
 ///      Interest calculation is delegated to the FlowHandler, which knows about APR and holding period.
 ///      The keeper queries FlowHandler for interest, then computes fee on top (interest / feeFraction).
 ///      Each deposit appends an additional rate on top of the current rate.
@@ -199,12 +197,12 @@ contract FlowStrategyKeeper is
         uint256 fee = uint256(interest) / cfg.feeFraction;
         uint256 principal = available - uint256(interest) - fee;
 
-        // Transfer principal to borrower
-        _executeSafeTransfer(cfg, cfg.borrower, principal);
+        // Transfer principal to borrower via FlowHandler (sole Safe module)
+        guard.transferAsset(cfg.borrower, principal);
 
         // Transfer fee to fee wallet (skip if zero to avoid wasteful zero-amount transfer)
         if (fee > 0) {
-            _executeSafeTransfer(cfg, cfg.feeWallet, fee);
+            guard.transferAsset(cfg.feeWallet, fee);
         }
 
         // Record last processed timestamp
@@ -315,32 +313,6 @@ contract FlowStrategyKeeper is
 
         // Execute via vault processor
         IVaultProcessor(cfg.vault).processor(targets, values, data);
-    }
-
-    /// @notice Execute a transfer from the Safe
-    /// @param cfg Keeper configuration
-    /// @param to Recipient address
-    /// @param amount Amount to transfer
-    function _executeSafeTransfer(FlowKeeperConfig memory cfg, address to, uint256 amount) internal {
-        bytes memory txData = abi.encodeCall(IERC20.transfer, (to, amount));
-        _executeSafeTransaction(cfg, cfg.baseAsset, 0, txData);
-    }
-
-    /// @notice Execute a transaction from the Gnosis Safe as a module
-    /// @dev The keeper must be registered as a module on the Safe
-    /// @param cfg Keeper configuration
-    /// @param to Target address
-    /// @param value ETH value
-    /// @param data Call data
-    function _executeSafeTransaction(FlowKeeperConfig memory cfg, address to, uint256 value, bytes memory data)
-        internal
-    {
-        IGnosisSafe safe = IGnosisSafe(cfg.safe);
-
-        // Execute transaction as module
-        bool success = safe.execTransactionFromModule(to, value, data, IGnosisSafe.Operation.Call);
-
-        if (!success) revert SafeExecutionFailed();
     }
 
     /// @notice Update the keeper configuration
