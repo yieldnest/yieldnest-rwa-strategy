@@ -65,7 +65,6 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     error InvalidFeeFraction();
     error ZeroAddress();
 
-    event RateIncreased(uint128 previousRate, uint128 newRate, uint128 depositAmount, uint256 loanAmount);
     event RateDecreased(uint128 previousRate, uint128 newRate, uint128 interest, uint256 loanAmount);
     event Disbursed(
         uint256 loanAmount, uint128 interest, uint128 newRate, uint256 principal, uint256 fee
@@ -169,21 +168,6 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
         emit Disbursed(loanAmount, result.interest, result.newRate, result.principal, result.fee);
     }
 
-    /// @notice Given a loanAmount, compute interest, deposit it into the stream, and increase the rate
-    /// @dev Caller must have OPERATOR_ROLE. Stream-only operation — does not transfer principal or fee.
-    /// @param loanAmount The total loan amount from which interest is derived
-    /// @return depositAmount The interest amount deposited into the stream
-    /// @return newRate The new rate per second after the increase
-    function increaseRate(uint256 loanAmount)
-        external
-        onlyRole(OPERATOR_ROLE)
-        returns (uint128 depositAmount, uint128 newRate)
-    {
-        uint128 currentRate;
-        (currentRate, depositAmount, newRate) = _increaseStreamRate(loanAmount);
-
-        emit RateIncreased(currentRate, newRate, depositAmount, loanAmount);
-    }
 
     /// @notice Given a repaid loanAmount, compute the rate reduction and adjust the stream down
     /// @dev Caller must have OPERATOR_ROLE. Only adjusts the rate — does not refund deposited funds.
