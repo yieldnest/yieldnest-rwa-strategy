@@ -142,8 +142,9 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         keeper.grantRole(keeper.CONFIG_MANAGER_ROLE(), admin);
         keeper.grantRole(keeper.PAUSER_ROLE(), admin);
 
-        // Transfer FlowHandler admin to admin
+        // Transfer FlowHandler roles to admin
         flowHandler.grantRole(flowHandler.DEFAULT_ADMIN_ROLE(), admin);
+        flowHandler.grantRole(flowHandler.MANAGER_ROLE(), admin);
         flowHandler.renounceRole(flowHandler.DEFAULT_ADMIN_ROLE(), address(this));
 
         // Renounce test contract's roles

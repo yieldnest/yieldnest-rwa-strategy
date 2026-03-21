@@ -17,8 +17,11 @@ import {FlowMath} from "src/FlowMath.sol";
 ///         - Stream pause/void/refund are handled directly by the multisig
 /// @dev Deployed behind a TransparentUpgradeableProxy.
 contract FlowHandler is AccessControlEnumerableUpgradeable {
-    /// @notice Role that can call increaseRate (e.g. the FlowStrategyKeeper)
+    /// @notice Role that can call disburse / decreaseRate (e.g. the FlowStrategyKeeper)
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+
+    /// @notice Role that can update configuration (APR, holding period, limits, borrower, feeWallet, feeFraction)
+    bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
 
     /// @notice Gnosis Safe that owns the stream
     address public safe;
@@ -193,7 +196,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     /// @notice Update rate limits
     /// @param _maxRateDelta New max rate delta per call (0 = unlimited)
     /// @param _maxRate New max absolute rate (0 = unlimited)
-    function setLimits(uint128 _maxRateDelta, uint128 _maxRate) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setLimits(uint128 _maxRateDelta, uint128 _maxRate) external onlyRole(MANAGER_ROLE) {
         maxRateDelta = _maxRateDelta;
         maxRate = _maxRate;
         emit LimitsUpdated(_maxRateDelta, _maxRate);
@@ -201,7 +204,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
 
     /// @notice Update the holding period
     /// @param _holdingPeriod New duration in seconds
-    function setHoldingPeriod(uint256 _holdingPeriod) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setHoldingPeriod(uint256 _holdingPeriod) external onlyRole(MANAGER_ROLE) {
         if (_holdingPeriod == 0 || _holdingPeriod > 365 days) revert InvalidHoldingPeriod();
         holdingPeriod = _holdingPeriod;
         emit HoldingPeriodUpdated(_holdingPeriod);
@@ -209,7 +212,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
 
     /// @notice Update the APR
     /// @param _apr New APR (1e18 = 100%)
-    function setApr(uint256 _apr) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setApr(uint256 _apr) external onlyRole(MANAGER_ROLE) {
         if (_apr == 0 || _apr > FlowMath.PRECISION) revert InvalidApr();
         apr = _apr;
         emit AprUpdated(_apr);
@@ -217,7 +220,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
 
     /// @notice Update the borrower address
     /// @param _borrower New borrower address
-    function setBorrower(address _borrower) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setBorrower(address _borrower) external onlyRole(MANAGER_ROLE) {
         if (_borrower == address(0)) revert ZeroAddress();
         borrower = _borrower;
         emit BorrowerUpdated(_borrower);
@@ -225,7 +228,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
 
     /// @notice Update the fee wallet address
     /// @param _feeWallet New fee wallet address
-    function setFeeWallet(address _feeWallet) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setFeeWallet(address _feeWallet) external onlyRole(MANAGER_ROLE) {
         if (_feeWallet == address(0)) revert ZeroAddress();
         feeWallet = _feeWallet;
         emit FeeWalletUpdated(_feeWallet);
@@ -233,7 +236,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
 
     /// @notice Update the fee fraction
     /// @param _feeFraction New fee denominator (>= 2)
-    function setFeeFraction(uint256 _feeFraction) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setFeeFraction(uint256 _feeFraction) external onlyRole(MANAGER_ROLE) {
         if (_feeFraction < 2) revert InvalidFeeFraction();
         feeFraction = _feeFraction;
         emit FeeFractionUpdated(_feeFraction);
