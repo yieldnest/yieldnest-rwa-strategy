@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 pragma solidity ^0.8.28;
 
-import {Ownable} from "lib/openzeppelin-contracts/contracts/access/Ownable.sol";
+import {AccessControlEnumerable} from
+    "lib/openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol";
 import {IERC4626} from "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 
 import {IValidator} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/src/interface/IValidator.sol";
@@ -11,7 +12,7 @@ import {ISablierFlow, UD21x18} from "src/interfaces/sablier/ISablierFlow.sol";
 /// @notice Transaction validator for the Safe Guard that checks adjustRatePerSecond calls
 ///         don't push the effective APR (relative to vault totalAssets) above a per-stream cap.
 ///         Passes through all other transactions without validation.
-contract FlowValidator is IValidator, Ownable {
+contract FlowValidator is IValidator, AccessControlEnumerable {
     /// @notice A stream ID paired with its maximum allowed APR
     struct StreamLimit {
         uint256 streamId;
@@ -37,9 +38,12 @@ contract FlowValidator is IValidator, Ownable {
 
     event LimitsUpdated();
 
-    constructor(address _flow, address _vault, uint8 _tokenDecimals, StreamLimit[] memory limits_, address owner_)
-        Ownable(owner_)
-    {
+    /// @notice Role required to call setLimits
+    bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
+
+    constructor(address _flow, address _vault, uint8 _tokenDecimals, StreamLimit[] memory limits_, address admin_) {
+        _grantRole(DEFAULT_ADMIN_ROLE, admin_);
+        _grantRole(MANAGER_ROLE, admin_);
         flow = _flow;
         vault = IERC4626(_vault);
         tokenDecimals = _tokenDecimals;
@@ -101,7 +105,7 @@ contract FlowValidator is IValidator, Ownable {
 
     /// @notice Replace the entire limits array
     /// @param limits_ New set of stream limits
-    function setLimits(StreamLimit[] calldata limits_) external onlyOwner {
+    function setLimits(StreamLimit[] calldata limits_) external onlyRole(MANAGER_ROLE) {
         delete _limits;
         for (uint256 i = 0; i < limits_.length; i++) {
             _limits.push(limits_[i]);

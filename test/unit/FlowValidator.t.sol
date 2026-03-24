@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {FlowValidator} from "src/validators/FlowValidator.sol";
 import {ISablierFlow, UD21x18} from "src/interfaces/sablier/ISablierFlow.sol";
 import {IERC4626} from "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
+import {IAccessControl} from "lib/openzeppelin-contracts/contracts/access/IAccessControl.sol";
 
 /// @title FlowValidatorTest
 /// @notice Unit tests for FlowValidator — no fork needed, uses mock vault.
@@ -35,7 +36,8 @@ contract FlowValidatorTest is Test {
         assertEq(validator.flow(), flow);
         assertEq(address(validator.vault()), vaultAddr);
         assertEq(validator.tokenDecimals(), TOKEN_DECIMALS);
-        assertEq(validator.owner(), owner);
+        assertTrue(validator.hasRole(validator.DEFAULT_ADMIN_ROLE(), owner));
+        assertTrue(validator.hasRole(validator.MANAGER_ROLE(), owner));
     }
 
     function test_constructorSetsLimits() public view {
@@ -281,12 +283,17 @@ contract FlowValidatorTest is Test {
         validator.setLimits(newLimits);
     }
 
-    function test_setLimitsRevertsForNonOwner() public {
+    function test_setLimitsRevertsForNonManager() public {
         FlowValidator.StreamLimit[] memory newLimits = new FlowValidator.StreamLimit[](1);
         newLimits[0] = FlowValidator.StreamLimit({streamId: 1, maxApr: 0.10e18});
 
+        bytes32 managerRole = validator.MANAGER_ROLE();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, address(0xDEAD), managerRole
+            )
+        );
         vm.prank(address(0xDEAD));
-        vm.expectRevert();
         validator.setLimits(newLimits);
     }
 
