@@ -12,6 +12,7 @@ import {TransparentUpgradeableProxy} from
 
 import {FlowStrategyKeeper, IFlowStrategyKeeper} from "src/FlowStrategyKeeper.sol";
 import {FlowHandler} from "src/FlowHandler.sol";
+import {FlowValidator} from "src/validators/FlowValidator.sol";
 import {ISablierFlow, UD21x18} from "src/interfaces/sablier/ISablierFlow.sol";
 import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
 import {MainnetKeeperContracts} from "@script/Contracts.sol";
@@ -24,6 +25,7 @@ import {MainnetKeeperContracts} from "@script/Contracts.sol";
 contract FlowStrategyKeeperIntegrationTest is Test {
     FlowStrategyKeeper public keeper;
     FlowHandler public flowHandler;
+    FlowValidator public flowValidator;
     ISablierFlow public sablierFlow;
     IERC20 public usdc;
     Safe public safe;
@@ -46,6 +48,7 @@ contract FlowStrategyKeeperIntegrationTest is Test {
 
     // Config constants
     uint256 constant APR = 0.11e18; // 11%
+    uint256 constant MAX_APR = 0.115e18; // 11.5% validator cap
     uint256 constant HOLDING_PERIOD = 28 days;
     uint256 constant MIN_THRESHOLD = 200_000e6;
     uint256 constant MIN_RESIDUAL = 1_000e6;
@@ -108,6 +111,11 @@ contract FlowStrategyKeeperIntegrationTest is Test {
             new TransparentUpgradeableProxy(address(flowHandlerImpl), proxyAdmin, initData);
         flowHandler = FlowHandler(address(proxy));
 
+        // Deploy FlowValidator with the stream's 11.5% APR cap
+        FlowValidator.StreamLimit[] memory limits = new FlowValidator.StreamLimit[](1);
+        limits[0] = FlowValidator.StreamLimit({streamId: streamId, maxApr: MAX_APR});
+        flowValidator = new FlowValidator(address(sablierFlow), vault, TOKEN_DECIMALS, limits, admin);
+
         // Enable FlowHandler proxy as a module on the Safe (it executes stream ops through Safe)
         _enableModuleOnSafe(address(flowHandler));
 
@@ -152,6 +160,9 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         keeper.renounceRole(keeper.CONFIG_MANAGER_ROLE(), address(this));
         keeper.renounceRole(keeper.DEFAULT_ADMIN_ROLE(), address(this));
 
+        // Mock vault.totalAssets() for FlowValidator APR checks
+        vm.mockCall(vault, abi.encodeWithSignature("totalAssets()"), abi.encode(uint256(100_000_000e6)));
+
         // Fund the Safe with USDC
         deal(address(usdc), address(safe), 10_000_000e6);
     }
@@ -186,6 +197,43 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         assertTrue(sablierFlow.isStream(streamId), "Stream should exist");
         assertEq(sablierFlow.getSender(streamId), address(safe), "Stream sender should be Safe");
         assertEq(sablierFlow.getRecipient(streamId), streamReceiver, "Stream recipient should match");
+    }
+
+    function test_validatorTracksStream() public view {
+        FlowValidator.StreamLimit[] memory limits = flowValidator.getLimits();
+        assertEq(limits.length, 1, "Should track one stream");
+        assertEq(limits[0].streamId, streamId, "Should track the created stream");
+        assertEq(limits[0].maxApr, MAX_APR, "Max APR should be 11.5%");
+    }
+
+    function test_validatorAllowsNormalDisburse() public {
+        // A normal disburse at 11% APR should pass the 11.5% validator cap
+        uint256 available = 100_000e6;
+
+        // Compute what rate this disburse will produce
+        uint256 interest = (available * APR * HOLDING_PERIOD) / 365 days / 1e18;
+        uint128 rateDelta = uint128((interest * 1e18) / (HOLDING_PERIOD * (10 ** TOKEN_DECIMALS)));
+        uint128 newRate = 1 + rateDelta; // 1 = initial rate
+
+        // Validator should allow this rate
+        bytes memory data =
+            abi.encodeCall(ISablierFlow.adjustRatePerSecond, (streamId, UD21x18.wrap(newRate)));
+        flowValidator.validate(address(sablierFlow), 0, data);
+    }
+
+    function test_validatorBlocksExcessiveRate() public {
+        // A rate implying > 11.5% APR relative to vault totalAssets should be blocked
+        uint256 totalAssets = 100_000_000e6;
+        // Compute max allowed rate at 11.5%
+        uint128 maxRate =
+            uint128(MAX_APR * totalAssets / ((10 ** TOKEN_DECIMALS) * uint256(365 days)));
+
+        // One above max should revert
+        bytes memory data =
+            abi.encodeCall(ISablierFlow.adjustRatePerSecond, (streamId, UD21x18.wrap(maxRate + 1)));
+
+        vm.expectRevert();
+        flowValidator.validate(address(sablierFlow), 0, data);
     }
 
     function test_configIsCorrect() public view {
