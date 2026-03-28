@@ -70,14 +70,18 @@ contract FlowValidatorTest is Test {
         validator.validate(address(0xDD), 0, data);
     }
 
-    function test_passesThrough_shortData() public view {
-        // Less than 4 bytes
+    function test_revertsOnShortData() public {
+        vm.expectRevert();
         validator.validate(flow, 0, hex"aabbcc");
     }
 
-    function test_passesThrough_differentSelector() public view {
-        // deposit selector, not adjustRatePerSecond
+    function test_revertsOnDifferentSelector() public {
         bytes memory data = abi.encodeCall(ISablierFlow.deposit, (STREAM_ID, 1000, address(0), address(0)));
+        bytes4 depositSelector = ISablierFlow.deposit.selector;
+
+        vm.expectRevert(
+            abi.encodeWithSelector(FlowValidator.InvalidFunctionSelector.selector, depositSelector)
+        );
         validator.validate(flow, 0, data);
     }
 
@@ -277,7 +281,7 @@ contract FlowValidatorTest is Test {
         newLimits[0] = FlowValidator.StreamLimit({streamId: 1, maxApr: 0.10e18});
 
         vm.expectEmit();
-        emit FlowValidator.LimitsUpdated();
+        emit FlowValidator.LimitsUpdated(newLimits);
 
         vm.prank(owner);
         validator.setLimits(newLimits);

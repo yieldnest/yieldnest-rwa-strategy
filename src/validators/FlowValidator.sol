@@ -33,10 +33,11 @@ contract FlowValidator is IValidator, AccessControlEnumerable {
     /// @notice Array of stream limits (small set, iterated linearly)
     StreamLimit[] private _limits;
 
+    error InvalidFunctionSelector(bytes4 selector);
     error StreamNotFound(uint256 streamId);
     error RateExceedsMaxApr(uint256 streamId, uint128 rate, uint256 effectiveApr, uint256 maxApr);
 
-    event LimitsUpdated();
+    event LimitsUpdated(StreamLimit[] limits);
 
     /// @notice Role required to call setLimits
     bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
@@ -59,10 +60,11 @@ contract FlowValidator is IValidator, AccessControlEnumerable {
     /// @param data The calldata of the transaction
     function validate(address target, uint256, bytes calldata data) external view override {
         if (target != flow) return;
-        if (data.length < 4) return;
 
         bytes4 selector = bytes4(data[:4]);
-        if (selector != ISablierFlow.adjustRatePerSecond.selector) return;
+        if (selector != ISablierFlow.adjustRatePerSecond.selector) {
+            revert InvalidFunctionSelector(selector);
+        }
 
         // Decode: adjustRatePerSecond(uint256 streamId, UD21x18 newRate)
         (uint256 streamId, UD21x18 newRate) = abi.decode(data[4:], (uint256, UD21x18));
@@ -110,7 +112,7 @@ contract FlowValidator is IValidator, AccessControlEnumerable {
         for (uint256 i = 0; i < limits_.length; i++) {
             _limits.push(limits_[i]);
         }
-        emit LimitsUpdated();
+        emit LimitsUpdated(limits_);
     }
 
     /// @dev Linear scan — array is expected to be small (< 10 entries)
