@@ -7,6 +7,7 @@ import {IERC4626} from "lib/openzeppelin-contracts/contracts/interfaces/IERC4626
 
 import {IValidator} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/src/interface/IValidator.sol";
 import {ISablierFlow, UD21x18} from "src/interfaces/sablier/ISablierFlow.sol";
+import {console} from "forge-std/console.sol";
 
 /// @title FlowValidator
 /// @notice Transaction validator for the Safe Guard that checks adjustRatePerSecond calls
@@ -19,7 +20,9 @@ contract FlowValidator is IValidator, AccessControlEnumerable {
         uint256 maxApr; // 1e18 = 100%
     }
 
-    uint256 internal constant SECONDS_PER_YEAR = 365 days;
+    uint256 public constant SECONDS_PER_YEAR = 365 days;
+
+    uint256 public constant APR_DENOMINATOR = 1e18;
 
     /// @notice Sablier Flow contract — only calls to this target are validated
     address public immutable flow;
@@ -73,14 +76,17 @@ contract FlowValidator is IValidator, AccessControlEnumerable {
         uint256 maxApr = _getMaxApr(streamId);
         uint256 totalAssets = vault.totalAssets();
 
-        // APR check (no division, no precision loss):
-        //   rate * 10^decimals * SECONDS_PER_YEAR <= maxApr * totalAssets
-        uint256 lhs = uint256(rate) * (10 ** tokenDecimals) * SECONDS_PER_YEAR;
-        uint256 rhs = maxApr * totalAssets;
+        if (totalAssets == 0) {
+            revert RateExceedsMaxApr(streamId, rate, type(uint256).max, maxApr);
+        }
 
-        if (lhs > rhs) {
-            uint256 effective = totalAssets > 0 ? lhs / totalAssets : type(uint256).max;
-            revert RateExceedsMaxApr(streamId, rate, effective, maxApr);
+        // APR check
+        uint256 aprAmountScaled = uint256(rate) * SECONDS_PER_YEAR * APR_DENOMINATOR;
+        uint256 maxAprAmountScaled = maxApr * totalAssets;
+
+        if (aprAmountScaled > maxAprAmountScaled) {
+            uint256 actualApr = aprAmountScaled / totalAssets;
+            revert RateExceedsMaxApr(streamId, rate, actualApr, maxApr);
         }
     }
 

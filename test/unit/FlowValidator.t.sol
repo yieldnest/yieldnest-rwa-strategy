@@ -49,15 +49,15 @@ contract FlowValidatorTest is Test {
 
     function test_constructorMultipleStreams() public {
         FlowValidator.StreamLimit[] memory limits = new FlowValidator.StreamLimit[](3);
-        limits[0] = FlowValidator.StreamLimit({streamId: 1, maxApr: 0.10e18});
+        limits[0] = FlowValidator.StreamLimit({streamId: 1, maxApr: 0.1e18});
         limits[1] = FlowValidator.StreamLimit({streamId: 2, maxApr: 0.115e18});
-        limits[2] = FlowValidator.StreamLimit({streamId: 3, maxApr: 0.20e18});
+        limits[2] = FlowValidator.StreamLimit({streamId: 3, maxApr: 0.2e18});
 
         FlowValidator v = new FlowValidator(flow, vaultAddr, TOKEN_DECIMALS, limits, owner);
 
-        assertEq(v.getMaxApr(1), 0.10e18);
+        assertEq(v.getMaxApr(1), 0.1e18);
         assertEq(v.getMaxApr(2), 0.115e18);
-        assertEq(v.getMaxApr(3), 0.20e18);
+        assertEq(v.getMaxApr(3), 0.2e18);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -79,9 +79,7 @@ contract FlowValidatorTest is Test {
         bytes memory data = abi.encodeCall(ISablierFlow.deposit, (STREAM_ID, 1000, address(0), address(0)));
         bytes4 depositSelector = ISablierFlow.deposit.selector;
 
-        vm.expectRevert(
-            abi.encodeWithSelector(FlowValidator.InvalidFunctionSelector.selector, depositSelector)
-        );
+        vm.expectRevert(abi.encodeWithSelector(FlowValidator.InvalidFunctionSelector.selector, depositSelector));
         validator.validate(flow, 0, data);
     }
 
@@ -113,8 +111,7 @@ contract FlowValidatorTest is Test {
         // = 1.15e23 * 1e7 / (1e6 * 3.1536e7) = 1.15e30 / 3.1536e13 = ~3.6465e16
         uint128 exactMaxRate = uint128(MAX_APR * totalAssets / ((10 ** TOKEN_DECIMALS) * SECONDS_PER_YEAR));
 
-        bytes memory data =
-            abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(exactMaxRate)));
+        bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(exactMaxRate)));
         // Should not revert — exactly at the boundary
         validator.validate(flow, 0, data);
     }
@@ -127,8 +124,7 @@ contract FlowValidatorTest is Test {
         uint128 exactMaxRate = uint128(MAX_APR * totalAssets / ((10 ** TOKEN_DECIMALS) * SECONDS_PER_YEAR));
         uint128 tooHighRate = exactMaxRate + 1;
 
-        bytes memory data =
-            abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(tooHighRate)));
+        bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(tooHighRate)));
 
         vm.expectRevert();
         validator.validate(flow, 0, data);
@@ -142,8 +138,7 @@ contract FlowValidatorTest is Test {
 
         uint256 effectiveApr = uint256(tooHighRate) * (10 ** TOKEN_DECIMALS) * SECONDS_PER_YEAR / totalAssets;
 
-        bytes memory data =
-            abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(tooHighRate)));
+        bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(tooHighRate)));
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -158,8 +153,7 @@ contract FlowValidatorTest is Test {
         _mockTotalAssets(totalAssets);
 
         uint256 unknownStreamId = 999;
-        bytes memory data =
-            abi.encodeCall(ISablierFlow.adjustRatePerSecond, (unknownStreamId, UD21x18.wrap(1)));
+        bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (unknownStreamId, UD21x18.wrap(1)));
 
         vm.expectRevert(abi.encodeWithSelector(FlowValidator.StreamNotFound.selector, unknownStreamId));
         validator.validate(flow, 0, data);
@@ -173,8 +167,7 @@ contract FlowValidatorTest is Test {
         _mockTotalAssets(0);
 
         // Any non-zero rate should revert when totalAssets is 0
-        bytes memory data =
-            abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(1)));
+        bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(1)));
 
         vm.expectRevert();
         validator.validate(flow, 0, data);
@@ -190,13 +183,11 @@ contract FlowValidatorTest is Test {
         uint128 maxRate = uint128(MAX_APR * totalAssets / ((10 ** TOKEN_DECIMALS) * SECONDS_PER_YEAR));
 
         // At boundary — should pass
-        bytes memory dataOk =
-            abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(maxRate)));
+        bytes memory dataOk = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(maxRate)));
         validator.validate(flow, 0, dataOk);
 
         // One above — should revert
-        bytes memory dataBad =
-            abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(maxRate + 1)));
+        bytes memory dataBad = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(maxRate + 1)));
         vm.expectRevert();
         validator.validate(flow, 0, dataBad);
     }
@@ -208,8 +199,7 @@ contract FlowValidatorTest is Test {
 
         uint128 maxRate = uint128(MAX_APR * totalAssets / ((10 ** TOKEN_DECIMALS) * SECONDS_PER_YEAR));
 
-        bytes memory data =
-            abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(maxRate)));
+        bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(maxRate)));
         validator.validate(flow, 0, data);
     }
 
@@ -259,7 +249,7 @@ contract FlowValidatorTest is Test {
     function test_setLimitsReplacesArray() public {
         FlowValidator.StreamLimit[] memory newLimits = new FlowValidator.StreamLimit[](2);
         newLimits[0] = FlowValidator.StreamLimit({streamId: 100, maxApr: 0.05e18});
-        newLimits[1] = FlowValidator.StreamLimit({streamId: 200, maxApr: 0.20e18});
+        newLimits[1] = FlowValidator.StreamLimit({streamId: 200, maxApr: 0.2e18});
 
         vm.prank(owner);
         validator.setLimits(newLimits);
@@ -269,7 +259,7 @@ contract FlowValidatorTest is Test {
         assertEq(limits[0].streamId, 100);
         assertEq(limits[0].maxApr, 0.05e18);
         assertEq(limits[1].streamId, 200);
-        assertEq(limits[1].maxApr, 0.20e18);
+        assertEq(limits[1].maxApr, 0.2e18);
 
         // Old stream ID should now revert
         vm.expectRevert(abi.encodeWithSelector(FlowValidator.StreamNotFound.selector, STREAM_ID));
@@ -278,7 +268,7 @@ contract FlowValidatorTest is Test {
 
     function test_setLimitsEmitsEvent() public {
         FlowValidator.StreamLimit[] memory newLimits = new FlowValidator.StreamLimit[](1);
-        newLimits[0] = FlowValidator.StreamLimit({streamId: 1, maxApr: 0.10e18});
+        newLimits[0] = FlowValidator.StreamLimit({streamId: 1, maxApr: 0.1e18});
 
         vm.expectEmit();
         emit FlowValidator.LimitsUpdated(newLimits);
@@ -289,7 +279,7 @@ contract FlowValidatorTest is Test {
 
     function test_setLimitsRevertsForNonManager() public {
         FlowValidator.StreamLimit[] memory newLimits = new FlowValidator.StreamLimit[](1);
-        newLimits[0] = FlowValidator.StreamLimit({streamId: 1, maxApr: 0.10e18});
+        newLimits[0] = FlowValidator.StreamLimit({streamId: 1, maxApr: 0.1e18});
 
         bytes32 managerRole = validator.MANAGER_ROLE();
         vm.expectRevert(
