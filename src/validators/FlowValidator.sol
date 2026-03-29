@@ -84,20 +84,11 @@ contract FlowValidator is IValidator, AccessControlEnumerable {
         // The maximum APR amount earned scaled by APR_DENOMINATOR
         uint256 scaledMaxAprAmount = maxApr * totalAssets;
 
-        // The actual APR amount earned scaled by APR_DENOMINATOR
-        //
-        // The Sablier Flow rate is scaled to have  18 decimals, therefore
-        // the rate is already multiplied by UD21x18_DENOMINATOR / (10 ** tokenDecimals)
-        // according to https://docs.sablier.com/guides/flow/examples/flow-calculate-rps
-        // To match the APR_DENOMINATOR scaling, multiply by the remaining factor:
-        //  APR_DENOMINATOR / (UD21x18_DENOMINATOR / (10 ** tokenDecimals))
-        // coincidentally,if both are 1e18 this is equal to 10 ** tokenDecimals
-        uint256 scaledAprAmount =
-            uint256(rate) * SECONDS_PER_YEAR * (APR_DENOMINATOR / (UD21x18_DENOMINATOR / (10 ** tokenDecimals)));
+        uint256 scaledAprAmount = effectiveAprScaled(rate);
 
         if (scaledAprAmount > scaledMaxAprAmount) {
             // simply divide by totalAssets to get the actual APR, since the scaling is already done
-            uint256 actualApr = scaledAprAmount / totalAssets;
+            uint256 actualApr = effectiveApr(rate, totalAssets);
             revert RateExceedsMaxApr(streamId, rate, actualApr, maxApr);
         }
     }
@@ -105,10 +96,33 @@ contract FlowValidator is IValidator, AccessControlEnumerable {
     /// @notice Compute the effective APR for a given rate against current totalAssets
     /// @param rate The rate per second (UD21x18 unwrapped)
     /// @return apr The effective APR (1e18 = 100%)
-    function effectiveApr(uint128 rate) external view returns (uint256 apr) {
+    function effectiveApr(uint128 rate) public view returns (uint256 apr) {
         uint256 totalAssets = vault.totalAssets();
-        if (totalAssets == 0) return type(uint256).max;
-        return uint256(rate) * (10 ** tokenDecimals) * SECONDS_PER_YEAR / totalAssets;
+
+        return effectiveApr(rate, totalAssets);
+    }
+
+    /**
+     * @notice Calculates the effective APR amount, scaled by APR_DENOMINATOR, for a given Flow rate.
+     * @dev
+     * The Sablier Flow rate is already expressed in 18 decimals (UD21x18), i.e., multiplied by (1e18 / 10^tokenDecimals).
+     * To further scale the value to match APR_DENOMINATOR, this function multiplies the rate by:
+     *     APR_DENOMINATOR / (UD21x18_DENOMINATOR / (10 ** tokenDecimals))
+     * If both APR_DENOMINATOR and UD21x18_DENOMINATOR are 1e18, this is equivalent to multiplying by 10 ** tokenDecimals.
+     * For rate calculation reference, see:
+     * https://docs.sablier.com/guides/flow/examples/flow-calculate-rps
+     * @param rate The Flow stream rate per second (unwrapped UD21x18 value).
+     * @return scaledAprAmount The APR numerator, scaled by APR_DENOMINATOR for comparison.
+     */
+    function effectiveAprScaled(uint128 rate) public view returns (uint256 scaledAprAmount) {
+        return uint256(rate) * SECONDS_PER_YEAR * (APR_DENOMINATOR / (UD21x18_DENOMINATOR / (10 ** tokenDecimals)));
+    }
+
+    function effectiveApr(uint128 rate, uint256 totalAssets) internal view returns (uint256 apr) {
+        if (totalAssets == 0) {
+            return type(uint256).max;
+        }
+        return effectiveAprScaled(rate) / totalAssets;
     }
 
     /// @notice Get the full list of stream limits
