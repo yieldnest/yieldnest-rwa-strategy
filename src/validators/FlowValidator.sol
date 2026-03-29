@@ -21,6 +21,10 @@ contract FlowValidator is IValidator, AccessControlEnumerable {
 
     uint256 internal constant SECONDS_PER_YEAR = 365 days;
 
+    uint256 internal constant APR_DENOMINATOR = 1e18;
+
+    uint256 internal constant UD21x18_DENOMINATOR = 1e18;
+
     /// @notice Sablier Flow contract — only calls to this target are validated
     address public immutable flow;
 
@@ -73,14 +77,28 @@ contract FlowValidator is IValidator, AccessControlEnumerable {
         uint256 maxApr = _getMaxApr(streamId);
         uint256 totalAssets = vault.totalAssets();
 
-        // APR check (no division, no precision loss):
-        //   rate * 10^decimals * SECONDS_PER_YEAR <= maxApr * totalAssets
-        uint256 lhs = uint256(rate) * (10 ** tokenDecimals) * SECONDS_PER_YEAR;
-        uint256 rhs = maxApr * totalAssets;
+        if (totalAssets == 0) {
+            revert RateExceedsMaxApr(streamId, rate, type(uint256).max, maxApr);
+        }
 
-        if (lhs > rhs) {
-            uint256 effective = totalAssets > 0 ? lhs / totalAssets : type(uint256).max;
-            revert RateExceedsMaxApr(streamId, rate, effective, maxApr);
+        // The maximum APR amount earned scaled by APR_DENOMINATOR
+        uint256 scaledMaxAprAmount = maxApr * totalAssets;
+
+        // The actual APR amount earned scaled by APR_DENOMINATOR
+        //
+        // The Sablier Flow rate is scaled to have  18 decimals, therefore
+        // the rate is already multiplied by UD21x18_DENOMINATOR / (10 ** tokenDecimals)
+        // according to https://docs.sablier.com/guides/flow/examples/flow-calculate-rps
+        // To match the APR_DENOMINATOR scaling, multiply by the remaining factor:
+        //  APR_DENOMINATOR / (UD21x18_DENOMINATOR / (10 ** tokenDecimals))
+        // coincidentally,if both are 1e18 this is equal to 10 ** tokenDecimals
+        uint256 scaledAprAmount =
+            uint256(rate) * SECONDS_PER_YEAR * (APR_DENOMINATOR / (UD21x18_DENOMINATOR / (10 ** tokenDecimals)));
+
+        if (scaledAprAmount > scaledMaxAprAmount) {
+            // simply divide by totalAssets to get the actual APR, since the scaling is already done
+            uint256 actualApr = scaledAprAmount / totalAssets;
+            revert RateExceedsMaxApr(streamId, rate, actualApr, maxApr);
         }
     }
 

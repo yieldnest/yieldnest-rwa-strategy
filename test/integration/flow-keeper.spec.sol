@@ -216,8 +216,7 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         uint128 newRate = 1 + rateDelta; // 1 = initial rate
 
         // Validator should allow this rate
-        bytes memory data =
-            abi.encodeCall(ISablierFlow.adjustRatePerSecond, (streamId, UD21x18.wrap(newRate)));
+        bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (streamId, UD21x18.wrap(newRate)));
         flowValidator.validate(address(sablierFlow), 0, data);
     }
 
@@ -225,12 +224,10 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         // A rate implying > 11.5% APR relative to vault totalAssets should be blocked
         uint256 totalAssets = 100_000_000e6;
         // Compute max allowed rate at 11.5%
-        uint128 maxRate =
-            uint128(MAX_APR * totalAssets / ((10 ** TOKEN_DECIMALS) * uint256(365 days)));
+        uint128 maxRate = uint128(MAX_APR * totalAssets / ((10 ** TOKEN_DECIMALS) * uint256(365 days)));
 
         // One above max should revert
-        bytes memory data =
-            abi.encodeCall(ISablierFlow.adjustRatePerSecond, (streamId, UD21x18.wrap(maxRate + 1)));
+        bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (streamId, UD21x18.wrap(maxRate + 1)));
 
         vm.expectRevert();
         flowValidator.validate(address(sablierFlow), 0, data);

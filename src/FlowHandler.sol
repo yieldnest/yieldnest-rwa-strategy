@@ -69,9 +69,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     error ZeroAddress();
 
     event RateDecreased(uint128 previousRate, uint128 newRate, uint128 interest, uint256 loanAmount);
-    event Disbursed(
-        uint256 loanAmount, uint128 interest, uint128 newRate, uint256 principal, uint256 fee
-    );
+    event Disbursed(uint256 loanAmount, uint128 interest, uint128 newRate, uint256 principal, uint256 fee);
     event LimitsUpdated(uint128 maxRateDelta, uint128 maxRate);
     event HoldingPeriodUpdated(uint256 holdingPeriod);
     event AprUpdated(uint256 apr);
@@ -149,11 +147,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     /// @dev Caller must have OPERATOR_ROLE. Performs up to 5 Safe transactions.
     /// @param loanAmount The total available amount to disburse
     /// @return result The disbursement result
-    function disburse(uint256 loanAmount)
-        external
-        onlyRole(OPERATOR_ROLE)
-        returns (DisburseResult memory result)
-    {
+    function disburse(uint256 loanAmount) external onlyRole(OPERATOR_ROLE) returns (DisburseResult memory result) {
         uint128 currentRate;
         (currentRate, result.interest, result.newRate) = _increaseStreamRate(loanAmount);
 
@@ -170,7 +164,6 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
 
         emit Disbursed(loanAmount, result.interest, result.newRate, result.principal, result.fee);
     }
-
 
     /// @notice Given a repaid loanAmount, compute the rate reduction and adjust the stream down
     /// @dev Caller must have OPERATOR_ROLE. Only adjusts the rate — does not refund deposited funds.
