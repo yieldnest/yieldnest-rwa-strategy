@@ -92,11 +92,8 @@ contract FlowValidatorTest is Test {
         uint256 totalAssets = 10_000_000e6;
         _mockTotalAssets(totalAssets);
 
-        // Max annual yield at 11.5% = 1,150,000 USDC = 1.15e12 base units
-        // Max rate = 1.15e12 / SECONDS_PER_YEAR = ~36,465 base units/sec
-        // In UD21x18: 36,465 * 1e12 = ~3.6465e16
         // Use a rate well below the max
-        uint128 safeRate = 3e16; // below max
+        uint128 safeRate = uint128(MAX_APR * totalAssets / (1e18 * SECONDS_PER_YEAR)) / 10;
 
         bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(safeRate)));
         validator.validate(flow, 0, data);
@@ -109,7 +106,7 @@ contract FlowValidatorTest is Test {
         // Compute exact max rate: maxApr * totalAssets / (10^decimals * SECONDS_PER_YEAR)
         // = 0.115e18 * 10_000_000e6 / (1e6 * 31536000)
         // = 1.15e23 * 1e7 / (1e6 * 3.1536e7) = 1.15e30 / 3.1536e13 = ~3.6465e16
-        uint128 exactMaxRate = uint128(MAX_APR * totalAssets / ((10 ** TOKEN_DECIMALS) * SECONDS_PER_YEAR));
+        uint128 exactMaxRate = uint128(MAX_APR * totalAssets / (1e18 * SECONDS_PER_YEAR));
 
         bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(exactMaxRate)));
         // Should not revert — exactly at the boundary
@@ -136,7 +133,7 @@ contract FlowValidatorTest is Test {
 
         uint128 tooHighRate = 1e18; // way too high — 1 USDC/sec = 31.5M USDC/year on 10M = 315% APR
 
-        uint256 effectiveApr = uint256(tooHighRate) * (10 ** TOKEN_DECIMALS) * SECONDS_PER_YEAR / totalAssets;
+        uint256 effectiveApr = uint256(tooHighRate) * (1e18) * SECONDS_PER_YEAR / totalAssets;
 
         bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(tooHighRate)));
 
@@ -180,7 +177,7 @@ contract FlowValidatorTest is Test {
 
         // Max rate for 100 USDC at 11.5%: 11.5 USDC/year ≈ 0.000000365 USDC/sec
         // In UD21x18: ~365 (very small)
-        uint128 maxRate = uint128(MAX_APR * totalAssets / ((10 ** TOKEN_DECIMALS) * SECONDS_PER_YEAR));
+        uint128 maxRate = uint128(MAX_APR * totalAssets / ((1e18) * SECONDS_PER_YEAR));
 
         // At boundary — should pass
         bytes memory dataOk = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(maxRate)));
@@ -197,7 +194,7 @@ contract FlowValidatorTest is Test {
         uint256 totalAssets = 1_000_000_000e6; // 1 billion USDC
         _mockTotalAssets(totalAssets);
 
-        uint128 maxRate = uint128(MAX_APR * totalAssets / ((10 ** TOKEN_DECIMALS) * SECONDS_PER_YEAR));
+        uint128 maxRate = uint128(MAX_APR * totalAssets / (1e18 * SECONDS_PER_YEAR));
 
         bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(maxRate)));
         validator.validate(flow, 0, data);
