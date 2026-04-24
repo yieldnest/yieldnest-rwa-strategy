@@ -23,44 +23,22 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     /// @notice Role that can update configuration (APR, holding period, limits, borrower, feeWallet, feeFraction)
     bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
 
-    /// @notice Gnosis Safe that owns the stream
-    address public safe;
-
-    /// @notice Sablier Flow contract
-    address public flow;
-
-    /// @notice The stream ID this guard controls
-    uint256 public streamId;
-
-    /// @notice The token being streamed
-    address public token;
-
-    /// @notice The stream recipient
-    address public streamRecipient;
-
-    /// @notice Token decimals, read from Sablier Flow at initialization
-    uint8 public tokenDecimals;
-
-    /// @notice APR for interest calculation (1e18 = 100%)
-    uint256 public apr;
-
-    /// @notice Duration over which each deposit's rate is spread (e.g., 28 days)
-    uint256 public holdingPeriod;
-
-    /// @notice Maximum rate increase (UD21x18) allowed per call. 0 = no limit.
-    uint128 public maxRateDelta;
-
-    /// @notice Maximum absolute rate (UD21x18) the stream can reach. 0 = no limit.
-    uint128 public maxRate;
-
-    /// @notice Address to receive principal (loan amount minus interest minus fee)
-    address public borrower;
-
-    /// @notice Address to receive fee (interest / feeFraction)
-    address public feeWallet;
-
-    /// @notice Fee denominator: fee = interest / feeFraction. Must be >= 2.
-    uint256 public feeFraction;
+    /// @custom:storage-location erc7201:yieldnest.storage.flow_handler
+    struct FlowHandlerStorage {
+        address safe;
+        address flow;
+        uint256 streamId;
+        address token;
+        address streamRecipient;
+        uint8 tokenDecimals;
+        uint256 apr;
+        uint256 holdingPeriod;
+        uint128 maxRateDelta;
+        uint128 maxRate;
+        address borrower;
+        address feeWallet;
+        uint256 feeFraction;
+    }
 
     error SafeExecutionFailed();
     error InvalidHoldingPeriod();
@@ -120,26 +98,28 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
 
         _grantRole(DEFAULT_ADMIN_ROLE, params.admin);
 
-        safe = params.safe;
-        flow = params.flow;
-        streamId = params.streamId;
-        token = params.token;
-        streamRecipient = params.streamRecipient;
-        tokenDecimals = ISablierFlow(params.flow).getTokenDecimals(params.streamId);
-        apr = params.apr;
-        holdingPeriod = params.holdingPeriod;
-        maxRateDelta = params.maxRateDelta;
-        maxRate = params.maxRate;
-        borrower = params.borrower;
-        feeWallet = params.feeWallet;
-        feeFraction = params.feeFraction;
+        FlowHandlerStorage storage $ = _getFlowHandlerStorage();
+        $.safe = params.safe;
+        $.flow = params.flow;
+        $.streamId = params.streamId;
+        $.token = params.token;
+        $.streamRecipient = params.streamRecipient;
+        $.tokenDecimals = ISablierFlow(params.flow).getTokenDecimals(params.streamId);
+        $.apr = params.apr;
+        $.holdingPeriod = params.holdingPeriod;
+        $.maxRateDelta = params.maxRateDelta;
+        $.maxRate = params.maxRate;
+        $.borrower = params.borrower;
+        $.feeWallet = params.feeWallet;
+        $.feeFraction = params.feeFraction;
     }
 
     /// @notice Compute the interest for a given loan amount
     /// @param loanAmount The total loan amount
     /// @return interest The interest amount (without fees)
     function computeInterest(uint256 loanAmount) public view returns (uint256) {
-        return FlowMath.computeInterest(loanAmount, apr, holdingPeriod);
+        FlowHandlerStorage storage $ = _getFlowHandlerStorage();
+        return FlowMath.computeInterest(loanAmount, $.apr, $.holdingPeriod);
     }
 
     /// @notice Disburse a loan amount: deposit interest into the stream, adjust rate up,
@@ -148,18 +128,19 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     /// @param loanAmount The total available amount to disburse
     /// @return result The disbursement result
     function disburse(uint256 loanAmount) external onlyRole(OPERATOR_ROLE) returns (DisburseResult memory result) {
+        FlowHandlerStorage storage $ = _getFlowHandlerStorage();
         uint128 currentRate;
         (currentRate, result.interest, result.newRate) = _increaseStreamRate(loanAmount);
 
-        result.fee = uint256(result.interest) / feeFraction;
+        result.fee = uint256(result.interest) / $.feeFraction;
         result.principal = loanAmount - uint256(result.interest) - result.fee;
 
         // Transfer principal to borrower
-        _executeSafe(token, abi.encodeCall(IERC20.transfer, (borrower, result.principal)));
+        _executeSafe($.token, abi.encodeCall(IERC20.transfer, ($.borrower, result.principal)));
 
         // Transfer fee to feeWallet (skip if zero)
         if (result.fee > 0) {
-            _executeSafe(token, abi.encodeCall(IERC20.transfer, (feeWallet, result.fee)));
+            _executeSafe($.token, abi.encodeCall(IERC20.transfer, ($.feeWallet, result.fee)));
         }
 
         emit Disbursed(loanAmount, result.interest, result.newRate, result.principal, result.fee);
@@ -175,13 +156,15 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
         onlyRole(OPERATOR_ROLE)
         returns (uint128 interest, uint128 newRate)
     {
-        uint128 currentRate = uint128(UD21x18.unwrap(ISablierFlow(flow).getRatePerSecond(streamId)));
+        FlowHandlerStorage storage $ = _getFlowHandlerStorage();
+        uint128 currentRate = uint128(UD21x18.unwrap(ISablierFlow($.flow).getRatePerSecond($.streamId)));
 
         uint128 rateDelta;
-        (interest, rateDelta, newRate) =
-            FlowMath.calculateRateDecrease(loanAmount, currentRate, apr, holdingPeriod, tokenDecimals, maxRateDelta);
+        (interest, rateDelta, newRate) = FlowMath.calculateRateDecrease(
+            loanAmount, currentRate, $.apr, $.holdingPeriod, $.tokenDecimals, $.maxRateDelta
+        );
 
-        _executeSafe(flow, abi.encodeCall(ISablierFlow.adjustRatePerSecond, (streamId, UD21x18.wrap(newRate))));
+        _executeSafe($.flow, abi.encodeCall(ISablierFlow.adjustRatePerSecond, ($.streamId, UD21x18.wrap(newRate))));
 
         emit RateDecreased(currentRate, newRate, interest, loanAmount);
     }
@@ -190,8 +173,9 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     /// @param _maxRateDelta New max rate delta per call (0 = unlimited)
     /// @param _maxRate New max absolute rate (0 = unlimited)
     function setLimits(uint128 _maxRateDelta, uint128 _maxRate) external onlyRole(MANAGER_ROLE) {
-        maxRateDelta = _maxRateDelta;
-        maxRate = _maxRate;
+        FlowHandlerStorage storage $ = _getFlowHandlerStorage();
+        $.maxRateDelta = _maxRateDelta;
+        $.maxRate = _maxRate;
         emit LimitsUpdated(_maxRateDelta, _maxRate);
     }
 
@@ -199,7 +183,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     /// @param _holdingPeriod New duration in seconds
     function setHoldingPeriod(uint256 _holdingPeriod) external onlyRole(MANAGER_ROLE) {
         if (_holdingPeriod == 0 || _holdingPeriod > 365 days) revert InvalidHoldingPeriod();
-        holdingPeriod = _holdingPeriod;
+        _getFlowHandlerStorage().holdingPeriod = _holdingPeriod;
         emit HoldingPeriodUpdated(_holdingPeriod);
     }
 
@@ -207,7 +191,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     /// @param _apr New APR (1e18 = 100%)
     function setApr(uint256 _apr) external onlyRole(MANAGER_ROLE) {
         if (_apr == 0 || _apr > FlowMath.PRECISION) revert InvalidApr();
-        apr = _apr;
+        _getFlowHandlerStorage().apr = _apr;
         emit AprUpdated(_apr);
     }
 
@@ -215,7 +199,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     /// @param _borrower New borrower address
     function setBorrower(address _borrower) external onlyRole(MANAGER_ROLE) {
         if (_borrower == address(0)) revert ZeroAddress();
-        borrower = _borrower;
+        _getFlowHandlerStorage().borrower = _borrower;
         emit BorrowerUpdated(_borrower);
     }
 
@@ -223,7 +207,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     /// @param _feeWallet New fee wallet address
     function setFeeWallet(address _feeWallet) external onlyRole(MANAGER_ROLE) {
         if (_feeWallet == address(0)) revert ZeroAddress();
-        feeWallet = _feeWallet;
+        _getFlowHandlerStorage().feeWallet = _feeWallet;
         emit FeeWalletUpdated(_feeWallet);
     }
 
@@ -231,7 +215,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     /// @param _feeFraction New fee denominator (>= 2)
     function setFeeFraction(uint256 _feeFraction) external onlyRole(MANAGER_ROLE) {
         if (_feeFraction < 2) revert InvalidFeeFraction();
-        feeFraction = _feeFraction;
+        _getFlowHandlerStorage().feeFraction = _feeFraction;
         emit FeeFractionUpdated(_feeFraction);
     }
 
@@ -240,21 +224,84 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
         internal
         returns (uint128 currentRate, uint128 depositAmount, uint128 newRate)
     {
-        currentRate = uint128(UD21x18.unwrap(ISablierFlow(flow).getRatePerSecond(streamId)));
+        FlowHandlerStorage storage $ = _getFlowHandlerStorage();
+        currentRate = uint128(UD21x18.unwrap(ISablierFlow($.flow).getRatePerSecond($.streamId)));
 
         uint128 rateDelta;
         (depositAmount, rateDelta, newRate) = FlowMath.calculateRateIncrease(
-            loanAmount, currentRate, apr, holdingPeriod, tokenDecimals, maxRateDelta, maxRate
+            loanAmount, currentRate, $.apr, $.holdingPeriod, $.tokenDecimals, $.maxRateDelta, $.maxRate
         );
 
-        _executeSafe(token, abi.encodeCall(IERC20.approve, (flow, depositAmount)));
-        _executeSafe(flow, abi.encodeCall(ISablierFlow.deposit, (streamId, depositAmount, safe, streamRecipient)));
-        _executeSafe(flow, abi.encodeCall(ISablierFlow.adjustRatePerSecond, (streamId, UD21x18.wrap(newRate))));
+        _executeSafe($.token, abi.encodeCall(IERC20.approve, ($.flow, depositAmount)));
+        _executeSafe(
+            $.flow, abi.encodeCall(ISablierFlow.deposit, ($.streamId, depositAmount, $.safe, $.streamRecipient))
+        );
+        _executeSafe($.flow, abi.encodeCall(ISablierFlow.adjustRatePerSecond, ($.streamId, UD21x18.wrap(newRate))));
     }
 
     /// @notice Execute a call through the Safe as a module
     function _executeSafe(address to, bytes memory data) internal {
-        bool success = IGnosisSafe(safe).execTransactionFromModule(to, 0, data, IGnosisSafe.Operation.Call);
+        bool success = IGnosisSafe(_getFlowHandlerStorage().safe).execTransactionFromModule(
+            to, 0, data, IGnosisSafe.Operation.Call
+        );
         if (!success) revert SafeExecutionFailed();
+    }
+
+    function safe() public view returns (address) {
+        return _getFlowHandlerStorage().safe;
+    }
+
+    function flow() public view returns (address) {
+        return _getFlowHandlerStorage().flow;
+    }
+
+    function streamId() public view returns (uint256) {
+        return _getFlowHandlerStorage().streamId;
+    }
+
+    function token() public view returns (address) {
+        return _getFlowHandlerStorage().token;
+    }
+
+    function streamRecipient() public view returns (address) {
+        return _getFlowHandlerStorage().streamRecipient;
+    }
+
+    function tokenDecimals() public view returns (uint8) {
+        return _getFlowHandlerStorage().tokenDecimals;
+    }
+
+    function apr() public view returns (uint256) {
+        return _getFlowHandlerStorage().apr;
+    }
+
+    function holdingPeriod() public view returns (uint256) {
+        return _getFlowHandlerStorage().holdingPeriod;
+    }
+
+    function maxRateDelta() public view returns (uint128) {
+        return _getFlowHandlerStorage().maxRateDelta;
+    }
+
+    function maxRate() public view returns (uint128) {
+        return _getFlowHandlerStorage().maxRate;
+    }
+
+    function borrower() public view returns (address) {
+        return _getFlowHandlerStorage().borrower;
+    }
+
+    function feeWallet() public view returns (address) {
+        return _getFlowHandlerStorage().feeWallet;
+    }
+
+    function feeFraction() public view returns (uint256) {
+        return _getFlowHandlerStorage().feeFraction;
+    }
+
+    function _getFlowHandlerStorage() internal pure returns (FlowHandlerStorage storage $) {
+        assembly {
+            $.slot := 0x896881cf334f778fa94c6a17861664c516faa92b454f0a85365fe8bc17a4fc7b
+        }
     }
 }
