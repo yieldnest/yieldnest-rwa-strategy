@@ -247,6 +247,10 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
         if (!success) revert SafeExecutionFailed();
     }
 
+    /*//////////////////////////////////////////////////////////////
+                                GETTERS
+    //////////////////////////////////////////////////////////////*/
+
     function safe() public view returns (address) {
         return _getFlowHandlerStorage().safe;
     }
