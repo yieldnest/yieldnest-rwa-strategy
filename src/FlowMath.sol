@@ -20,6 +20,14 @@ library FlowMath {
     error RateUnderflow(uint128 currentRate, uint128 rateDelta);
     error StreamIsPaused();
 
+    struct Disbursement {
+        uint128 interest;
+        uint128 rateDelta;
+        uint128 newRate;
+        uint256 principal;
+        uint256 fee;
+    }
+
     /// @notice Compute interest for a given loan amount
     /// @param loanAmount The total loan amount
     /// @param apr APR (1e18 = 100%)
@@ -72,6 +80,34 @@ library FlowMath {
         if (maxRate > 0 && newRate > maxRate) {
             revert RateExceedsMax(newRate, maxRate);
         }
+    }
+
+    /// @notice Compute all disbursement outputs in one pure step before execution.
+    /// @param loanAmount The total available amount to disburse
+    /// @param currentRate The current stream rate (UD21x18 unwrapped)
+    /// @param apr APR (1e18 = 100%)
+    /// @param holdingPeriod Duration in seconds over which interest is spread
+    /// @param tokenDecimals Token decimals for UD21x18 conversion
+    /// @param maxRateDelta Maximum allowed rate increase per call (0 = unlimited)
+    /// @param maxRate Maximum allowed absolute rate (0 = unlimited)
+    /// @param feeFraction Fee denominator (>= 2)
+    /// @return disbursement The fully computed disbursement result
+    function calculateDisbursement(
+        uint256 loanAmount,
+        uint128 currentRate,
+        uint256 apr,
+        uint256 holdingPeriod,
+        uint8 tokenDecimals,
+        uint128 maxRateDelta,
+        uint128 maxRate,
+        uint256 feeFraction
+    ) internal pure returns (Disbursement memory disbursement) {
+        (disbursement.interest, disbursement.rateDelta, disbursement.newRate) = calculateRateIncrease(
+            loanAmount, currentRate, apr, holdingPeriod, tokenDecimals, maxRateDelta, maxRate
+        );
+
+        disbursement.fee = uint256(disbursement.interest) / feeFraction;
+        disbursement.principal = loanAmount - uint256(disbursement.interest) - disbursement.fee;
     }
 
     /// @notice Compute interest, rate delta, and new rate for a loan repayment (rate decrease)

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 pragma solidity ^0.8.28;
 
-import {AccessControlEnumerableUpgradeable} from
-    "lib/openzeppelin-contracts-upgradeable/contracts/access/extensions/AccessControlEnumerableUpgradeable.sol";
+import {
+    AccessControlEnumerableUpgradeable
+} from "lib/openzeppelin-contracts-upgradeable/contracts/access/extensions/AccessControlEnumerableUpgradeable.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
 import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
@@ -129,11 +130,24 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     /// @return result The disbursement result
     function disburse(uint256 loanAmount) external onlyRole(OPERATOR_ROLE) returns (DisburseResult memory result) {
         FlowHandlerStorage storage $ = _getFlowHandlerStorage();
-        uint128 currentRate;
-        (currentRate, result.interest, result.newRate) = _increaseStreamRate(loanAmount);
+        uint128 currentRate = uint128(UD21x18.unwrap(ISablierFlow($.flow).getRatePerSecond($.streamId)));
 
-        result.fee = uint256(result.interest) / $.feeFraction;
-        result.principal = loanAmount - uint256(result.interest) - result.fee;
+        FlowMath.Disbursement memory disbursement = FlowMath.calculateDisbursement(
+            loanAmount, currentRate, $.apr, $.holdingPeriod, $.tokenDecimals, $.maxRateDelta, $.maxRate, $.feeFraction
+        );
+
+        result.interest = disbursement.interest;
+        result.newRate = disbursement.newRate;
+        result.principal = disbursement.principal;
+        result.fee = disbursement.fee;
+
+        _executeSafe($.token, abi.encodeCall(IERC20.approve, ($.flow, result.interest)));
+        _executeSafe(
+            $.flow, abi.encodeCall(ISablierFlow.deposit, ($.streamId, result.interest, $.safe, $.streamRecipient))
+        );
+        _executeSafe(
+            $.flow, abi.encodeCall(ISablierFlow.adjustRatePerSecond, ($.streamId, UD21x18.wrap(result.newRate)))
+        );
 
         // Transfer principal to borrower
         _executeSafe($.token, abi.encodeCall(IERC20.transfer, ($.borrower, result.principal)));
@@ -219,31 +233,10 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
         emit FeeFractionUpdated(_feeFraction);
     }
 
-    /// @notice Internal: read current rate, compute increase, execute 3 Safe txs (approve, deposit, adjustRate)
-    function _increaseStreamRate(uint256 loanAmount)
-        internal
-        returns (uint128 currentRate, uint128 depositAmount, uint128 newRate)
-    {
-        FlowHandlerStorage storage $ = _getFlowHandlerStorage();
-        currentRate = uint128(UD21x18.unwrap(ISablierFlow($.flow).getRatePerSecond($.streamId)));
-
-        uint128 rateDelta;
-        (depositAmount, rateDelta, newRate) = FlowMath.calculateRateIncrease(
-            loanAmount, currentRate, $.apr, $.holdingPeriod, $.tokenDecimals, $.maxRateDelta, $.maxRate
-        );
-
-        _executeSafe($.token, abi.encodeCall(IERC20.approve, ($.flow, depositAmount)));
-        _executeSafe(
-            $.flow, abi.encodeCall(ISablierFlow.deposit, ($.streamId, depositAmount, $.safe, $.streamRecipient))
-        );
-        _executeSafe($.flow, abi.encodeCall(ISablierFlow.adjustRatePerSecond, ($.streamId, UD21x18.wrap(newRate))));
-    }
-
     /// @notice Execute a call through the Safe as a module
     function _executeSafe(address to, bytes memory data) internal {
-        bool success = IGnosisSafe(_getFlowHandlerStorage().safe).execTransactionFromModule(
-            to, 0, data, IGnosisSafe.Operation.Call
-        );
+        bool success = IGnosisSafe(_getFlowHandlerStorage().safe)
+            .execTransactionFromModule(to, 0, data, IGnosisSafe.Operation.Call);
         if (!success) revert SafeExecutionFailed();
     }
 

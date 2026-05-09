@@ -34,6 +34,21 @@ contract FlowMathHarness {
     ) external pure returns (uint128 interest, uint128 rateDelta, uint128 newRate) {
         return FlowMath.calculateRateDecrease(loanAmount, currentRate, apr, holdingPeriod, tokenDecimals, maxRateDelta);
     }
+
+    function calculateDisbursement(
+        uint256 loanAmount,
+        uint128 currentRate,
+        uint256 apr,
+        uint256 holdingPeriod,
+        uint8 tokenDecimals,
+        uint128 maxRateDelta,
+        uint128 maxRate,
+        uint256 feeFraction
+    ) external pure returns (FlowMath.Disbursement memory) {
+        return FlowMath.calculateDisbursement(
+            loanAmount, currentRate, apr, holdingPeriod, tokenDecimals, maxRateDelta, maxRate, feeFraction
+        );
+    }
 }
 
 /// @title FlowMathTest
@@ -49,6 +64,7 @@ contract FlowMathTest is Test {
     uint8 constant USDC_DECIMALS = 6;
     uint256 constant SECONDS_PER_YEAR = 365 days;
     uint256 constant PRECISION = 1e18;
+    uint256 constant FEE_FRACTION = 10;
 
     function setUp() public {
         math = new FlowMathHarness();
@@ -236,6 +252,29 @@ contract FlowMathTest is Test {
         uint128 expectedDelta = uint128(expectedInterest / HOLDING_PERIOD);
         assertEq(rateDelta, expectedDelta);
         assertEq(newRate, 1 + expectedDelta);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                   calculateDisbursement — CONCRETE
+    //////////////////////////////////////////////////////////////*/
+
+    function test_calculateDisbursement_100k() public view {
+        uint256 loan = 100_000e6;
+        uint128 currentRate = 1;
+
+        FlowMath.Disbursement memory disbursement =
+            math.calculateDisbursement(loan, currentRate, APR, HOLDING_PERIOD, USDC_DECIMALS, 0, 0, FEE_FRACTION);
+
+        uint256 expectedInterest = math.computeInterest(loan, APR, HOLDING_PERIOD);
+        uint128 expectedRateDelta = uint128((expectedInterest * 1e18) / (HOLDING_PERIOD * 1e6));
+        uint256 expectedFee = expectedInterest / FEE_FRACTION;
+        uint256 expectedPrincipal = loan - expectedInterest - expectedFee;
+
+        assertEq(disbursement.interest, expectedInterest);
+        assertEq(disbursement.rateDelta, expectedRateDelta);
+        assertEq(disbursement.newRate, currentRate + expectedRateDelta);
+        assertEq(disbursement.fee, expectedFee);
+        assertEq(disbursement.principal, expectedPrincipal);
     }
 
     /*//////////////////////////////////////////////////////////////
