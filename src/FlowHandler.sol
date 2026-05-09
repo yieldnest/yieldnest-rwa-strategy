@@ -18,8 +18,11 @@ import {FlowMath} from "src/FlowMath.sol";
 ///         - Stream pause/void/refund are handled directly by the multisig
 /// @dev Deployed behind a TransparentUpgradeableProxy.
 contract FlowHandler is AccessControlEnumerableUpgradeable {
-    /// @notice Role that can call disburse / decreaseRate (e.g. the FlowStrategyKeeper)
-    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+    /// @notice Role that can call disburse (e.g. the FlowStrategyKeeper)
+    bytes32 public constant DISBURSE_OPERATOR_ROLE = keccak256("DISBURSE_OPERATOR_ROLE");
+
+    /// @notice Role that can call decreaseRate
+    bytes32 public constant DECREASE_OPERATOR_ROLE = keccak256("DECREASE_OPERATOR_ROLE");
 
     /// @notice Role that can update configuration (APR, holding period, limits, borrower, feeWallet, feeFraction)
     bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
@@ -125,10 +128,14 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
 
     /// @notice Disburse a loan amount: deposit interest into the stream, adjust rate up,
     ///         transfer principal to borrower, and transfer fee to feeWallet.
-    /// @dev Caller must have OPERATOR_ROLE. Performs up to 5 Safe transactions.
+    /// @dev Caller must have DISBURSE_OPERATOR_ROLE. Performs up to 5 Safe transactions.
     /// @param loanAmount The total available amount to disburse
     /// @return result The disbursement result
-    function disburse(uint256 loanAmount) external onlyRole(OPERATOR_ROLE) returns (DisburseResult memory result) {
+    function disburse(uint256 loanAmount)
+        external
+        onlyRole(DISBURSE_OPERATOR_ROLE)
+        returns (DisburseResult memory result)
+    {
         FlowHandlerStorage storage $ = _getFlowHandlerStorage();
         uint128 currentRate = uint128(UD21x18.unwrap(ISablierFlow($.flow).getRatePerSecond($.streamId)));
 
@@ -161,13 +168,13 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     }
 
     /// @notice Given a repaid loanAmount, compute the rate reduction and adjust the stream down
-    /// @dev Caller must have OPERATOR_ROLE. Only adjusts the rate — does not refund deposited funds.
+    /// @dev Caller must have DECREASE_OPERATOR_ROLE. Only adjusts the rate — does not refund deposited funds.
     /// @param loanAmount The repaid loan amount from which the rate reduction is derived
     /// @return interest The interest amount corresponding to the repaid loan
     /// @return newRate The new rate per second after the decrease
     function decreaseRate(uint256 loanAmount)
         external
-        onlyRole(OPERATOR_ROLE)
+        onlyRole(DECREASE_OPERATOR_ROLE)
         returns (uint128 interest, uint128 newRate)
     {
         FlowHandlerStorage storage $ = _getFlowHandlerStorage();

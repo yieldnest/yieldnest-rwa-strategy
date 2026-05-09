@@ -7,8 +7,9 @@ import {Safe} from "lib/safe-smart-account/contracts/Safe.sol";
 import {SafeProxyFactory} from "lib/safe-smart-account/contracts/proxies/SafeProxyFactory.sol";
 import {SafeProxy} from "lib/safe-smart-account/contracts/proxies/SafeProxy.sol";
 import {Enum} from "lib/safe-smart-account/contracts/libraries/Enum.sol";
-import {TransparentUpgradeableProxy} from
-    "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 import {FlowStrategyKeeper, IFlowStrategyKeeper} from "src/FlowStrategyKeeper.sol";
 import {FlowHandler} from "src/FlowHandler.sol";
@@ -89,8 +90,7 @@ contract FlowStrategyKeeperIntegrationTest is Test {
         FlowHandler flowHandlerImpl = new FlowHandler();
         bytes memory initData = abi.encodeCall(
             FlowHandler.initialize,
-            (
-                FlowHandler.InitParams({
+            (FlowHandler.InitParams({
                     admin: address(this),
                     safe: address(safe),
                     flow: address(sablierFlow),
@@ -104,8 +104,7 @@ contract FlowStrategyKeeperIntegrationTest is Test {
                     borrower: borrower,
                     feeWallet: feeWallet,
                     feeFraction: FEE_FRACTION
-                })
-            )
+                }))
         );
         TransparentUpgradeableProxy proxy =
             new TransparentUpgradeableProxy(address(flowHandlerImpl), proxyAdmin, initData);
@@ -136,8 +135,8 @@ contract FlowStrategyKeeperIntegrationTest is Test {
             })
         );
 
-        // Grant keeper OPERATOR_ROLE on FlowHandler
-        flowHandler.grantRole(flowHandler.OPERATOR_ROLE(), address(keeper));
+        // Grant keeper disburse permissions on FlowHandler
+        flowHandler.grantRole(flowHandler.DISBURSE_OPERATOR_ROLE(), address(keeper));
 
         // Separate KEEPER_ROLE and POWER_KEEPER_ROLE onto different addresses
         keeper.grantRole(keeper.POWER_KEEPER_ROLE(), powerKeeperBot);
