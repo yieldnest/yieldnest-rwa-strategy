@@ -55,6 +55,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     event LimitsUpdated(uint128 maxRateDelta, uint128 maxRate);
     event HoldingPeriodUpdated(uint256 holdingPeriod);
     event AprUpdated(uint256 apr);
+    event StreamRecipientUpdated(address streamRecipient);
     event BorrowerUpdated(address borrower);
     event FeeWalletUpdated(address feeWallet);
     event FeeFractionUpdated(uint256 feeFraction);
@@ -214,6 +215,14 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
         if (_apr == 0 || _apr > FlowMath.PRECISION) revert InvalidApr();
         _getFlowHandlerStorage().apr = _apr;
         emit AprUpdated(_apr);
+    }
+
+    /// @notice Update the borrower address
+    /// @param _streamRecipient New stream recipient address
+    function setStreamRecipient(address _streamRecipient) external onlyRole(MANAGER_ROLE) {
+        if (_streamRecipient == address(0)) revert ZeroAddress();
+        _getFlowHandlerStorage().streamRecipient = _streamRecipient;
+        emit StreamRecipientUpdated(_streamRecipient);
     }
 
     /// @notice Update the borrower address
