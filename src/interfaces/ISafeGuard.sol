@@ -23,4 +23,20 @@ interface ISafeGuard {
         external
         view
         returns (IVault.FunctionRule memory);
+
+    function validateCall(address target, uint256 value, bytes calldata data) external view;
+
+    function checkTransaction(
+        address to,
+        uint256 value,
+        bytes calldata data,
+        uint8 operation,
+        uint256 safeTxGas,
+        uint256 baseGas,
+        uint256 gasPrice,
+        address gasToken,
+        address payable refundReceiver,
+        bytes calldata signatures,
+        address executor
+    ) external view;
 }

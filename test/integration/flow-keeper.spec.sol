@@ -194,6 +194,73 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
         safeguard.setProcessorRules(targets, funcSigs, rules);
     }
 
+    function _executeDirectSafeTransaction(address to, bytes memory data) internal {
+        address[] memory owners = IGnosisSafe(safe).getOwners();
+        uint256 threshold = IGnosisSafe(safe).getThreshold();
+        _sortAddresses(owners);
+
+        address executor = owners[0];
+        bytes32 txHash = IGnosisSafe(safe)
+            .getTransactionHash(
+                to, 0, data, IGnosisSafe.Operation.Call, 0, 0, 0, address(0), address(0), IGnosisSafe(safe).nonce()
+            );
+
+        bytes memory signatures;
+        for (uint256 i = 0; i < threshold; i++) {
+            address owner = owners[i];
+            if (owner != executor) {
+                vm.prank(owner);
+                IGnosisSafe(safe).approveHash(txHash);
+            }
+
+            signatures = bytes.concat(signatures, bytes32(uint256(uint160(owner))), bytes32(0), bytes1(uint8(1)));
+        }
+
+        vm.prank(executor);
+        IGnosisSafe(safe)
+            .execTransaction(
+                to, 0, data, IGnosisSafe.Operation.Call, 0, 0, 0, address(0), payable(address(0)), signatures
+            );
+    }
+
+    function _buildDirectSafeSignaturesAndExecutor(address to, bytes memory data)
+        internal
+        returns (address executor, bytes memory signatures)
+    {
+        address[] memory owners = IGnosisSafe(safe).getOwners();
+        uint256 threshold = IGnosisSafe(safe).getThreshold();
+        _sortAddresses(owners);
+
+        executor = owners[0];
+        bytes32 txHash = IGnosisSafe(safe)
+            .getTransactionHash(
+                to, 0, data, IGnosisSafe.Operation.Call, 0, 0, 0, address(0), address(0), IGnosisSafe(safe).nonce()
+            );
+
+        for (uint256 i = 0; i < threshold; i++) {
+            address owner = owners[i];
+            if (owner != executor) {
+                vm.prank(owner);
+                IGnosisSafe(safe).approveHash(txHash);
+            }
+
+            signatures = bytes.concat(signatures, bytes32(uint256(uint160(owner))), bytes32(0), bytes1(uint8(1)));
+        }
+    }
+
+    function _sortAddresses(address[] memory addrs) internal pure {
+        uint256 length = addrs.length;
+        for (uint256 i = 0; i < length; i++) {
+            for (uint256 j = i + 1; j < length; j++) {
+                if (uint160(addrs[j]) < uint160(addrs[i])) {
+                    address tmp = addrs[i];
+                    addrs[i] = addrs[j];
+                    addrs[j] = tmp;
+                }
+            }
+        }
+    }
+
     function _approveRule(address spender) internal pure returns (IVault.FunctionRule memory rule) {
         IVault.ParamRule[] memory paramRules = new IVault.ParamRule[](2);
         address[] memory spenders = new address[](1);
@@ -382,6 +449,101 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
         flowValidator.validate(address(sablierFlow), 0, data);
     }
 
+    function test_excessiveDirectRateAdjustmentIsRejectedByValidatorDirectly() public {
+        uint128 excessiveRate = _excessiveRateForDirectAdjustment();
+        bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (streamId, UD21x18.wrap(excessiveRate)));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                FlowValidator.RateExceedsMaxApr.selector,
+                streamId,
+                excessiveRate,
+                flowValidator.effectiveApr(excessiveRate),
+                MAX_APR
+            )
+        );
+        flowValidator.validate(address(sablierFlow), 0, data);
+    }
+
+    function test_excessiveDirectRateAdjustmentIsRejectedBySafeGuardValidateCall() public {
+        uint128 excessiveRate = _excessiveRateForDirectAdjustment();
+        bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (streamId, UD21x18.wrap(excessiveRate)));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                FlowValidator.RateExceedsMaxApr.selector,
+                streamId,
+                excessiveRate,
+                flowValidator.effectiveApr(excessiveRate),
+                MAX_APR
+            )
+        );
+        safeguard.validateCall(address(sablierFlow), 0, data);
+    }
+
+    function test_excessiveDirectRateAdjustmentIsRejectedBySafeGuardCheckTransaction() public {
+        uint128 excessiveRate = _excessiveRateForDirectAdjustment();
+        bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (streamId, UD21x18.wrap(excessiveRate)));
+        (address executor, bytes memory signatures) = _buildDirectSafeSignaturesAndExecutor(address(sablierFlow), data);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                FlowValidator.RateExceedsMaxApr.selector,
+                streamId,
+                excessiveRate,
+                flowValidator.effectiveApr(excessiveRate),
+                MAX_APR
+            )
+        );
+        safeguard.checkTransaction(
+            address(sablierFlow),
+            0,
+            data,
+            uint8(IGnosisSafe.Operation.Call),
+            0,
+            0,
+            0,
+            address(0),
+            payable(address(0)),
+            signatures,
+            executor
+        );
+    }
+
+    function test_directSafeTransactionInvokesSafeGuardCheckTransaction() public {
+        uint128 currentRate = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
+        uint128 nextRate = currentRate + 1;
+        bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (streamId, UD21x18.wrap(nextRate)));
+        (address executor, bytes memory signatures) = _buildDirectSafeSignaturesAndExecutor(address(sablierFlow), data);
+
+        uint128 rateBefore = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
+
+        vm.expectCall(
+            address(safeguard),
+            abi.encodeCall(
+                ISafeGuard.checkTransaction,
+                (
+                    address(sablierFlow),
+                    0,
+                    data,
+                    uint8(IGnosisSafe.Operation.Call),
+                    0,
+                    0,
+                    0,
+                    address(0),
+                    payable(address(0)),
+                    signatures,
+                    executor
+                )
+            )
+        );
+
+        _executeDirectSafeTransaction(address(sablierFlow), data);
+
+        uint128 rateAfter = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
+        assertEq(rateBefore + 1, rateAfter, "direct safe tx should update rate");
+    }
+
     /*//////////////////////////////////////////////////////////////
                         YIELD CALCULATION
     //////////////////////////////////////////////////////////////*/
@@ -409,6 +571,16 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
         uint256 interest = (available * APR * HOLDING_PERIOD) / 365 days / 1e18;
         uint128 additionalRate = uint128((interest * 1e18) / (HOLDING_PERIOD * (10 ** TOKEN_DECIMALS)));
         return currentRate + additionalRate;
+    }
+
+    function _excessiveRateForDirectAdjustment() internal view returns (uint128 excessiveRate) {
+        uint256 totalAssets = strategy.totalAssets();
+        uint128 maxRate = uint128(MAX_APR * totalAssets / ((10 ** TOKEN_DECIMALS) * uint256(365 days)));
+        excessiveRate = maxRate + 1;
+
+        while (flowValidator.effectiveApr(excessiveRate) <= MAX_APR) {
+            excessiveRate++;
+        }
     }
 
     function test_processInflows_rateCalculation() public {
