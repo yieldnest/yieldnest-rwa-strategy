@@ -11,6 +11,8 @@ import {BaseScript} from "lib/yieldnest-flex-strategy/script/BaseScript.sol";
 import {VerifyStrategy} from "@script/VerifyStrategy.s.sol";
 
 contract BaseIntegrationTest is Test {
+    address public constant SAFEGUARD = 0x81e3E4224D9a2d66D9edbA6d4781d475AA65F01e;
+
     BaseScript public deployment;
     address DEPLOYER = address(0xd34db33f);
 
