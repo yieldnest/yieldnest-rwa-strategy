@@ -130,6 +130,9 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     /// @notice Disburse a loan amount: deposit interest into the stream, adjust rate up,
     ///         transfer principal to borrower, and transfer fee to feeWallet.
     /// @dev Caller must have DISBURSE_OPERATOR_ROLE. Performs up to 5 Safe transactions.
+    ///      This path is only for active streams with a non-zero rate.
+    ///      If the underlying Flow stream is paused or still at zero rate, this function intentionally reverts.
+    ///      Starting a zero-rate/paused stream is a separate operational action and must use Sablier Flow `restart(...)`.
     /// @param loanAmount The total available amount to disburse
     /// @return result The disbursement result
     function disburse(uint256 loanAmount)
@@ -217,7 +220,11 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
         emit AprUpdated(_apr);
     }
 
-    /// @notice Update the borrower address
+    /// @notice Update the locally configured stream recipient used for Flow deposit validation.
+    /// @dev This does not change the actual Sablier stream NFT owner / recipient on the Flow contract.
+    ///      It is intentionally decoupled so operations can keep FlowHandler aligned with the live stream recipient.
+    ///      If the transferable stream NFT moves to a new owner, this value must also be updated before disbursements.
+    ///      This is by design to avoid depositing against a stale recipient configuration.
     /// @param _streamRecipient New stream recipient address
     function setStreamRecipient(address _streamRecipient) external onlyRole(MANAGER_ROLE) {
         if (_streamRecipient == address(0)) revert ZeroAddress();
