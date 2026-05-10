@@ -25,6 +25,14 @@ interface ISafeModuleGuardManager {
         returns (address[] memory array, address next);
 }
 
+interface IAccessControlErrors {
+    error AccessControlUnauthorizedAccount(address account, bytes32 neededRole);
+}
+
+interface IPausableErrors {
+    error EnforcedPause();
+}
+
 /// @title FlowStrategyKeeperIntegrationTest
 /// @notice Fork tests using the deployed strategy Safe and the deployed YieldNest SafeGuard.
 ///         The FlowHandler is installed as a new Safe module, and SafeGuard module rules are
@@ -277,7 +285,15 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
         uint128 maxRate = uint128(MAX_APR * totalAssets / ((10 ** TOKEN_DECIMALS) * uint256(365 days)));
         bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (streamId, UD21x18.wrap(maxRate + 1)));
 
-        vm.expectRevert();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                FlowValidator.RateExceedsMaxApr.selector,
+                streamId,
+                maxRate + 1,
+                flowValidator.effectiveApr(maxRate + 1),
+                MAX_APR
+            )
+        );
         flowValidator.validate(address(sablierFlow), 0, data);
     }
 
@@ -353,7 +369,15 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
 
         assertGt(newRate, maxRate, "derived disbursement should exceed validator cap");
 
-        vm.expectRevert();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                FlowValidator.RateExceedsMaxApr.selector,
+                streamId,
+                newRate,
+                flowValidator.effectiveApr(newRate),
+                MAX_APR
+            )
+        );
         bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (streamId, UD21x18.wrap(newRate)));
         flowValidator.validate(address(sablierFlow), 0, data);
     }
@@ -562,14 +586,23 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
     //////////////////////////////////////////////////////////////*/
 
     function test_revertOnUnauthorizedKeeper() public {
-        vm.prank(address(0xBEEF));
-        vm.expectRevert();
+        address unauthorized = address(0xBEEF);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControlErrors.AccessControlUnauthorizedAccount.selector, unauthorized, keeper.POWER_KEEPER_ROLE()
+            )
+        );
+        vm.prank(unauthorized);
         keeper.processInflows(0, 100_000e6);
     }
 
     function test_revertOnKeeperCallingPowerKeeperFunction() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControlErrors.AccessControlUnauthorizedAccount.selector, keeperBot, keeper.POWER_KEEPER_ROLE()
+            )
+        );
         vm.prank(keeperBot);
-        vm.expectRevert();
         keeper.processInflows(0, 100_000e6);
     }
 
@@ -580,8 +613,10 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
     }
 
     function test_revertOnInsufficientSafeBalance() public {
+        uint256 balance = usdc.balanceOf(safe);
+        uint256 required = 100_000_000e6 + MIN_RESIDUAL;
+        vm.expectRevert(abi.encodeWithSelector(IFlowStrategyKeeper.InsufficientSafeBalance.selector, balance, required));
         vm.prank(powerKeeperBot);
-        vm.expectRevert();
         keeper.processInflows(0, 100_000_000e6);
     }
 
@@ -589,8 +624,8 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
         vm.prank(admin);
         keeper.pause();
 
+        vm.expectRevert(IPausableErrors.EnforcedPause.selector);
         vm.prank(powerKeeperBot);
-        vm.expectRevert();
         keeper.processInflows(0, 100_000e6);
     }
 

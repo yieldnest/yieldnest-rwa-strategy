@@ -126,7 +126,15 @@ contract FlowValidatorTest is Test {
 
         bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(tooHighRate)));
 
-        vm.expectRevert();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                FlowValidator.RateExceedsMaxApr.selector,
+                STREAM_ID,
+                tooHighRate,
+                validator.effectiveApr(tooHighRate),
+                MAX_APR
+            )
+        );
         validator.validate(flow, 0, data);
     }
 
@@ -169,7 +177,11 @@ contract FlowValidatorTest is Test {
         // Any non-zero rate should revert when totalAssets is 0
         bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(1)));
 
-        vm.expectRevert();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                FlowValidator.RateExceedsMaxApr.selector, STREAM_ID, uint128(1), type(uint256).max, MAX_APR
+            )
+        );
         validator.validate(flow, 0, data);
     }
 
@@ -188,7 +200,15 @@ contract FlowValidatorTest is Test {
 
         // One above — should revert
         bytes memory dataBad = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(maxRate + 1)));
-        vm.expectRevert();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                FlowValidator.RateExceedsMaxApr.selector,
+                STREAM_ID,
+                maxRate + 1,
+                validator.effectiveApr(maxRate + 1),
+                MAX_APR
+            )
+        );
         validator.validate(flow, 0, dataBad);
     }
 
