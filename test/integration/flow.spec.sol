@@ -599,6 +599,36 @@ contract SablierFlowTest is Test {
         );
     }
 
+    /// @notice Test prefunding a paused stream, then restarting it later.
+    function test_depositAtZeroRateThenRestart() public {
+        uint128 zeroRate = 0;
+        uint128 depositAmount = 10_000e6; // 10,000 USDC
+
+        vm.prank(sender);
+        streamId = sablierFlow.create(sender, recipient, UD21x18.wrap(zeroRate), uint40(block.timestamp), usdc, true);
+
+        vm.startPrank(sender);
+        usdc.approve(address(sablierFlow), depositAmount);
+        sablierFlow.deposit(streamId, depositAmount, sender, recipient);
+        vm.stopPrank();
+
+        assertEq(UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId)), 0, "Rate should start at 0");
+        assertEq(sablierFlow.getBalance(streamId), depositAmount, "Balance should equal prefunded amount");
+
+        // One week passes while paused - no funds should stream.
+        vm.warp(block.timestamp + 7 days);
+        assertEq(sablierFlow.withdrawableAmountOf(streamId), 0, "Nothing should stream while rate is 0");
+
+        // Restart at 1000 base units/sec = 0.001 USDC/sec.
+        uint128 restartedRate = uint128(1e15);
+        vm.prank(sender);
+        sablierFlow.restart(streamId, UD21x18.wrap(restartedRate));
+
+        // Ten days at 0.001 USDC/sec = 864 USDC.
+        vm.warp(block.timestamp + 10 days);
+        assertEq(sablierFlow.withdrawableAmountOf(streamId), 864e6, "864 USDC should stream over 10 days");
+    }
+
     /*//////////////////////////////////////////////////////////////
                        REFUND BY SENDER
     //////////////////////////////////////////////////////////////*/
