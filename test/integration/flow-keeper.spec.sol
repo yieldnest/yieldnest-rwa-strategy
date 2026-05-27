@@ -544,6 +544,51 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
         assertEq(rateBefore + 1, rateAfter, "direct safe tx should update rate");
     }
 
+    function test_directSafeTransactionInvokesSafeGuardCheckTransaction_excessiveRate() public {
+        uint128 currentRate = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
+        uint128 nextRate = currentRate + 10000e18;
+        bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (streamId, UD21x18.wrap(nextRate)));
+        (address executor, bytes memory signatures) = _buildDirectSafeSignaturesAndExecutor(address(sablierFlow), data);
+
+        uint128 rateBefore = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
+
+        vm.expectCall(
+            address(safeguard),
+            abi.encodeCall(
+                ISafeGuard.checkTransaction,
+                (
+                    address(sablierFlow),
+                    0,
+                    data,
+                    uint8(IGnosisSafe.Operation.Call),
+                    0,
+                    0,
+                    0,
+                    address(0),
+                    payable(address(0)),
+                    signatures,
+                    executor
+                )
+            )
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                FlowValidator.RateExceedsMaxApr.selector,
+                streamId,
+                nextRate,
+                flowValidator.effectiveApr(nextRate),
+                MAX_APR
+            )
+        );
+        _executeDirectSafeTransaction(address(sablierFlow), data);
+
+   
+
+        uint128 rateAfter = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
+        assertEq(rateBefore + 1, rateAfter, "direct safe tx should update rate");
+    }
+
     /*//////////////////////////////////////////////////////////////
                         YIELD CALCULATION
     //////////////////////////////////////////////////////////////*/
