@@ -86,35 +86,6 @@ contract FlowHandler is BaseSafeModule {
         uint256 feeFraction; // Fee denominator (>= 2)
     }
 
-    /// @notice Initialize the FlowHandler
-    /// @param params Initialization parameters
-    function initialize(InitParams calldata params) external initializer {
-        if (params.apr == 0 || params.apr > FlowMath.PRECISION) revert InvalidApr();
-        if (params.holdingPeriod == 0) revert InvalidHoldingPeriod();
-        if (params.borrower == address(0)) revert ZeroAddress();
-        if (params.feeWallet == address(0)) revert ZeroAddress();
-        if (params.feeFraction < 2) revert InvalidFeeFraction();
-
-        __AccessControlEnumerable_init();
-        __BaseSafeModule_init(params.safe, params.validator);
-
-        _grantRole(DEFAULT_ADMIN_ROLE, params.admin);
-
-        FlowHandlerStorage storage $ = _getFlowHandlerStorage();
-        $.flow = params.flow;
-        $.streamId = params.streamId;
-        $.token = params.token;
-        $.streamRecipient = params.streamRecipient;
-        $.tokenDecimals = ISablierFlow(params.flow).getTokenDecimals(params.streamId);
-        $.apr = params.apr;
-        $.holdingPeriod = params.holdingPeriod;
-        $.maxRateDelta = params.maxRateDelta;
-        $.maxRate = params.maxRate;
-        $.borrower = params.borrower;
-        $.feeWallet = params.feeWallet;
-        $.feeFraction = params.feeFraction;
-    }
-
     /// @notice Compute the interest for a given loan amount
     /// @param loanAmount The total loan amount
     /// @return interest The interest amount (without fees)
@@ -188,6 +159,39 @@ contract FlowHandler is BaseSafeModule {
         _executeSafe($.flow, abi.encodeCall(ISablierFlow.adjustRatePerSecond, ($.streamId, UD21x18.wrap(newRate))));
 
         emit RateDecreased(currentRate, newRate, interest, loanAmount);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                SETTERS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Initialize the FlowHandler
+    /// @param params Initialization parameters
+    function initialize(InitParams calldata params) external initializer {
+        if (params.apr == 0 || params.apr > FlowMath.PRECISION) revert InvalidApr();
+        if (params.holdingPeriod == 0) revert InvalidHoldingPeriod();
+        if (params.borrower == address(0)) revert ZeroAddress();
+        if (params.feeWallet == address(0)) revert ZeroAddress();
+        if (params.feeFraction < 2) revert InvalidFeeFraction();
+
+        __AccessControlEnumerable_init();
+        __BaseSafeModule_init(params.safe, params.validator);
+
+        _grantRole(DEFAULT_ADMIN_ROLE, params.admin);
+
+        FlowHandlerStorage storage $ = _getFlowHandlerStorage();
+        $.flow = params.flow;
+        $.streamId = params.streamId;
+        $.token = params.token;
+        $.streamRecipient = params.streamRecipient;
+        $.tokenDecimals = ISablierFlow(params.flow).getTokenDecimals(params.streamId);
+        $.apr = params.apr;
+        $.holdingPeriod = params.holdingPeriod;
+        $.maxRateDelta = params.maxRateDelta;
+        $.maxRate = params.maxRate;
+        $.borrower = params.borrower;
+        $.feeWallet = params.feeWallet;
+        $.feeFraction = params.feeFraction;
     }
 
     /// @notice Update rate limits
