@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 pragma solidity ^0.8.28;
 
-import {
-    AccessControlEnumerableUpgradeable
-} from "lib/openzeppelin-contracts-upgradeable/contracts/access/extensions/AccessControlEnumerableUpgradeable.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
-import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
+import {BaseSafeModule} from "src/BaseSafeModule.sol";
 import {ISablierFlow, UD21x18} from "src/interfaces/sablier/ISablierFlow.sol";
 import {FlowMath} from "src/FlowMath.sol";
 
@@ -17,7 +14,7 @@ import {FlowMath} from "src/FlowMath.sol";
 ///         - Rate increases are bounded by a max delta and max absolute rate
 ///         - Stream pause/void/refund are handled directly by the multisig
 /// @dev Deployed behind a TransparentUpgradeableProxy.
-contract FlowHandler is AccessControlEnumerableUpgradeable {
+contract FlowHandler is BaseSafeModule {
     /// @notice Role that can call disburse (e.g. the FlowStrategyKeeper)
     bytes32 public constant DISBURSE_OPERATOR_ROLE = keccak256("DISBURSE_OPERATOR_ROLE");
 
@@ -29,7 +26,6 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
 
     /// @custom:storage-location erc7201:yieldnest.storage.flow_handler
     struct FlowHandlerStorage {
-        address safe;
         address flow;
         uint256 streamId;
         address token;
@@ -44,7 +40,6 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
         uint256 feeFraction;
     }
 
-    error SafeExecutionFailed();
     error InvalidHoldingPeriod();
     error InvalidApr();
     error InvalidFeeFraction();
@@ -77,6 +72,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
     struct InitParams {
         address admin; // Admin address (DEFAULT_ADMIN_ROLE)
         address safe; // Gnosis Safe that is the stream sender
+        address validator; // Optional validator invoked before each Safe module transaction
         address flow; // Sablier Flow contract address
         uint256 streamId; // Pre-existing stream ID owned by the Safe
         address token; // The ERC-20 token being streamed
@@ -100,11 +96,11 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
         if (params.feeFraction < 2) revert InvalidFeeFraction();
 
         __AccessControlEnumerable_init();
+        __BaseSafeModule_init(params.safe, params.validator);
 
         _grantRole(DEFAULT_ADMIN_ROLE, params.admin);
 
         FlowHandlerStorage storage $ = _getFlowHandlerStorage();
-        $.safe = params.safe;
         $.flow = params.flow;
         $.streamId = params.streamId;
         $.token = params.token;
@@ -154,7 +150,7 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
 
         _executeSafe($.token, abi.encodeCall(IERC20.approve, ($.flow, result.interest)));
         _executeSafe(
-            $.flow, abi.encodeCall(ISablierFlow.deposit, ($.streamId, result.interest, $.safe, $.streamRecipient))
+            $.flow, abi.encodeCall(ISablierFlow.deposit, ($.streamId, result.interest, safe(), $.streamRecipient))
         );
         _executeSafe(
             $.flow, abi.encodeCall(ISablierFlow.adjustRatePerSecond, ($.streamId, UD21x18.wrap(result.newRate)))
@@ -256,20 +252,9 @@ contract FlowHandler is AccessControlEnumerableUpgradeable {
         emit FeeFractionUpdated(_feeFraction);
     }
 
-    /// @notice Execute a call through the Safe as a module
-    function _executeSafe(address to, bytes memory data) internal {
-        bool success = IGnosisSafe(_getFlowHandlerStorage().safe)
-            .execTransactionFromModule(to, 0, data, IGnosisSafe.Operation.Call);
-        if (!success) revert SafeExecutionFailed();
-    }
-
     /*//////////////////////////////////////////////////////////////
                                 GETTERS
     //////////////////////////////////////////////////////////////*/
-
-    function safe() public view returns (address) {
-        return _getFlowHandlerStorage().safe;
-    }
 
     function flow() public view returns (address) {
         return _getFlowHandlerStorage().flow;
