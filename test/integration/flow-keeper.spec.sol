@@ -15,6 +15,7 @@ import {FlowValidator} from "src/validators/FlowValidator.sol";
 import {ISablierFlow, UD21x18} from "src/interfaces/sablier/ISablierFlow.sol";
 import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
 import {ISafeGuard} from "src/interfaces/ISafeGuard.sol";
+import {MainnetStrategyActors} from "@script/Actors.sol";
 import {MainnetKeeperContracts} from "@script/Contracts.sol";
 
 interface ISafeModuleGuardManager {
@@ -41,7 +42,6 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
     address constant USDC_WHALE = 0x37305B1cD40574E4C5Ce33f8e8306Be057fD7341;
     address constant EXISTING_STRATEGY_SAFE_MODULE = 0x68521bE2613785A0E4710caE32D8F3219f05b6D2;
     address constant SENTINEL_MODULES = address(0x1);
-    address constant YN_SECURITY_COUNCIL = 0xfcad670592a3b24869C0b51a6c6FDED4F95D6975;
 
     uint256 constant APR = 0.11e18;
     uint256 constant MAX_APR = 0.115e18;
@@ -74,7 +74,7 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
     function setUp() public override {
         super.setUp();
 
-        admin = YN_SECURITY_COUNCIL;
+        admin = new MainnetStrategyActors().ADMIN();
         sablierFlow = ISablierFlow(MainnetKeeperContracts.SABLIER_FLOW);
         usdc = IERC20(MainnetKeeperContracts.USDC);
         safeguard = ISafeGuard(SAFEGUARD);
