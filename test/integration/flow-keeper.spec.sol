@@ -616,6 +616,58 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
         keeper.processInflows(0, available);
     }
 
+    function test_flowHandlerSafeGuardRejectsExcessiveDisbursementAfterPriorValidDisbursement() public {
+        uint256 firstAvailable = 100_000e6;
+
+        vm.prank(powerKeeperBot);
+        keeper.processInflows(0, firstAvailable);
+
+        uint128 currentRate = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
+        uint128 maxRate = uint128(MAX_APR * strategy.totalAssets() / ((10 ** TOKEN_DECIMALS) * uint256(365 days)));
+        uint256 secondAvailable = _availableToExceedRate(maxRate, currentRate);
+        uint128 newRate = _expectedNewRateForDisbursement(secondAvailable, currentRate);
+
+        assertLt(currentRate, maxRate, "first disbursement should stay below cap");
+        assertGt(newRate, maxRate, "second disbursement should exceed remaining rate headroom");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                FlowValidator.RateExceedsMaxApr.selector,
+                streamId,
+                newRate,
+                flowValidator.effectiveApr(newRate),
+                MAX_APR
+            )
+        );
+        vm.prank(powerKeeperBot);
+        keeper.processInflows(0, secondAvailable);
+    }
+
+    function test_flowHandlerSafeGuardRejectsDisbursementAfterTighteningLimits() public {
+        uint256 available = 100_000e6;
+        uint128 newRate =
+            _expectedNewRateForDisbursement(available, UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId)));
+        uint256 tightenedMaxApr = flowValidator.effectiveApr(newRate) - 1;
+
+        FlowValidator.StreamLimit[] memory tightenedLimits = new FlowValidator.StreamLimit[](1);
+        tightenedLimits[0] = FlowValidator.StreamLimit({streamId: streamId, maxApr: tightenedMaxApr});
+
+        vm.prank(admin);
+        flowValidator.setLimits(tightenedLimits);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                FlowValidator.RateExceedsMaxApr.selector,
+                streamId,
+                newRate,
+                flowValidator.effectiveApr(newRate),
+                tightenedMaxApr
+            )
+        );
+        vm.prank(powerKeeperBot);
+        keeper.processInflows(0, available);
+    }
+
     /*//////////////////////////////////////////////////////////////
                         YIELD CALCULATION
     //////////////////////////////////////////////////////////////*/
@@ -653,6 +705,11 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
         while (flowValidator.effectiveApr(excessiveRate) <= MAX_APR) {
             excessiveRate++;
         }
+    }
+
+    function _availableToExceedRate(uint128 maxRate, uint128 currentRate) internal pure returns (uint256 available) {
+        available = ((uint256(maxRate - currentRate) + 1) * uint256(365 days) * (10 ** TOKEN_DECIMALS) + APR - 1) / APR;
+        return available + 1e6;
     }
 
     function test_processInflows_rateCalculation() public {
