@@ -72,7 +72,7 @@ contract FlowHandler is BaseSafeModule {
     struct InitParams {
         address admin; // Admin address (DEFAULT_ADMIN_ROLE)
         address safe; // Gnosis Safe that is the stream sender
-        address validator; // Optional validator invoked before each Safe module transaction
+        address safeGuard; // Optional SafeGuard invoked before each Safe module transaction
         address flow; // Sablier Flow contract address
         uint256 streamId; // Pre-existing stream ID owned by the Safe
         address token; // The ERC-20 token being streamed
@@ -175,7 +175,7 @@ contract FlowHandler is BaseSafeModule {
         if (params.feeFraction < 2) revert InvalidFeeFraction();
 
         __AccessControlEnumerable_init();
-        __BaseSafeModule_init(params.safe, params.validator);
+        __BaseSafeModule_init(params.safe, params.safeGuard);
 
         _grantRole(DEFAULT_ADMIN_ROLE, params.admin);
 

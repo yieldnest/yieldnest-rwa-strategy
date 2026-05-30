@@ -33,24 +33,6 @@ interface IPausableErrors {
     error EnforcedPause();
 }
 
-contract FlowHandlerAdjustRateValidator is IValidator {
-    address public immutable flow;
-    IValidator public immutable inner;
-
-    constructor(address flow_, IValidator inner_) {
-        flow = flow_;
-        inner = inner_;
-    }
-
-    function validate(address target, uint256 value, bytes calldata data) external view {
-        value;
-        if (target != flow || bytes4(data[:4]) != ISablierFlow.adjustRatePerSecond.selector) {
-            return;
-        }
-        inner.validate(target, 0, data);
-    }
-}
-
 /// @title FlowStrategyKeeperIntegrationTest
 /// @notice Fork tests using the deployed strategy Safe and the deployed YieldNest SafeGuard.
 ///         The FlowHandler is installed as a new Safe module, and SafeGuard module rules are
@@ -72,7 +54,6 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
     FlowStrategyKeeper public keeper;
     FlowHandler public flowHandler;
     FlowValidator public flowValidator;
-    FlowHandlerAdjustRateValidator public flowHandlerValidator;
     ISablierFlow public sablierFlow;
     ISafeGuard public safeguard;
     IERC20 public usdc;
@@ -113,7 +94,7 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
             (FlowHandler.InitParams({
                     admin: address(this),
                     safe: safe,
-                    validator: address(0),
+                    safeGuard: address(safeguard),
                     flow: address(sablierFlow),
                     streamId: streamId,
                     token: address(usdc),
@@ -134,8 +115,6 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
         FlowValidator.StreamLimit[] memory limits = new FlowValidator.StreamLimit[](1);
         limits[0] = FlowValidator.StreamLimit({streamId: streamId, maxApr: MAX_APR});
         flowValidator = new FlowValidator(address(sablierFlow), vault, TOKEN_DECIMALS, limits, admin);
-        flowHandlerValidator =
-            new FlowHandlerAdjustRateValidator(address(sablierFlow), IValidator(address(flowValidator)));
 
         // Install the new module before enabling the module guard.
         vm.prank(safe);
@@ -613,7 +592,7 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
             );
     }
 
-    function test_flowHandlerValidatorRejectsExcessiveDisbursement() public {
+    function test_flowHandlerSafeGuardRejectsExcessiveDisbursement() public {
         uint128 currentRate = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
         uint128 maxRate = uint128(MAX_APR * strategy.totalAssets() / ((10 ** TOKEN_DECIMALS) * uint256(365 days)));
         uint256 available =
@@ -622,9 +601,6 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
         uint128 newRate = _expectedNewRateForDisbursement(available, currentRate);
 
         assertGt(newRate, maxRate, "derived disbursement should exceed validator cap");
-
-        vm.prank(admin);
-        flowHandler.setValidator(address(flowHandlerValidator));
 
         vm.expectRevert(
             abi.encodeWithSelector(
