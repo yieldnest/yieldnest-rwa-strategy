@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 /// @title MainnetKeeperContracts
-/// @notice Mainnet contract addresses for StrategyKeeper deployment
+/// @notice Mainnet contract addresses for the flow-based keeper deployment
 library MainnetKeeperContracts {
     // ═══════════════════════════════════════════════════════════════════════════
     // TOKENS
