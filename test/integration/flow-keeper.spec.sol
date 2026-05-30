@@ -42,6 +42,7 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
     address constant USDC_WHALE = 0x37305B1cD40574E4C5Ce33f8e8306Be057fD7341;
     address constant EXISTING_STRATEGY_SAFE_MODULE = 0x68521bE2613785A0E4710caE32D8F3219f05b6D2;
     address constant SENTINEL_MODULES = address(0x1);
+    address constant SAFEGUARD = 0x81e3E4224D9a2d66D9edbA6d4781d475AA65F01e;
 
     uint256 constant APR = 0.11e18;
     uint256 constant MAX_APR = 0.115e18;
