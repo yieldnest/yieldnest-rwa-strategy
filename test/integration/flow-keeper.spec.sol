@@ -17,6 +17,7 @@ import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
 import {ISafeGuard} from "src/interfaces/ISafeGuard.sol";
 import {MainnetStrategyActors} from "@script/Actors.sol";
 import {MainnetKeeperContracts} from "@script/Contracts.sol";
+import {RewardsSweeper} from "lib/yieldnest-flex-strategy/src/utils/RewardsSweeper.sol";
 
 interface ISafeModuleGuardManager {
     function setModuleGuard(address moduleGuard) external;
@@ -859,6 +860,47 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
 
         uint128 remainingWithdrawable = sablierFlow.withdrawableAmountOf(streamId);
         assertTrue(remainingWithdrawable > 0, "should have more to withdraw");
+    }
+
+    function test_flowWithdrawnToRewardsSweeperCanBeProcessedAsRewards() public {
+        RewardsSweeper rewardsSweeper = deployment.rewardsSweeper();
+        uint256 available = 100_000e6;
+
+        vm.prank(powerKeeperBot);
+        keeper.processInflows(0, available);
+
+        vm.warp(block.timestamp + HOLDING_PERIOD + 1);
+
+        uint256 totalAssetsBeforeSweep = strategy.totalAssets();
+        uint256 accountingTokenBalanceBeforeSweep = accountingToken.balanceOf(address(strategy));
+        uint256 sweeperBalanceBeforeWithdraw = usdc.balanceOf(address(rewardsSweeper));
+
+        vm.prank(streamReceiver);
+        uint128 withdrawn = sablierFlow.withdrawMax(streamId, streamReceiver);
+
+        assertGt(withdrawn, 0, "stream should release held-back funds");
+        assertEq(
+            usdc.balanceOf(address(rewardsSweeper)) - sweeperBalanceBeforeWithdraw,
+            withdrawn,
+            "withdrawn flow funds should land on the rewards sweeper"
+        );
+
+        vm.warp(block.timestamp + 30 days);
+        uint256 snapshotIndex = accountingModule.snapshotsLength() - 1;
+
+        vm.prank(deployment.actors().PROCESSOR());
+        rewardsSweeper.sweepRewards(withdrawn, snapshotIndex);
+
+        assertEq(
+            accountingToken.balanceOf(address(strategy)) - accountingTokenBalanceBeforeSweep,
+            withdrawn,
+            "sweeping the streamed amount mints accounting tokens again"
+        );
+        assertEq(
+            strategy.totalAssets() - totalAssetsBeforeSweep,
+            withdrawn,
+            "sweeping the streamed amount increases strategy totalAssets"
+        );
     }
 
     /*//////////////////////////////////////////////////////////////
