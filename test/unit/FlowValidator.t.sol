@@ -61,12 +61,13 @@ contract FlowValidatorTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////
-                          VALIDATE — PASS THROUGH
+                        VALIDATE — TARGET / SELECTOR
     //////////////////////////////////////////////////////////////*/
 
-    function test_passesThrough_wrongTarget() public view {
+    function test_revertsOnWrongTarget() public {
         bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (STREAM_ID, UD21x18.wrap(1e18)));
-        // Different target — should not revert
+
+        vm.expectRevert(abi.encodeWithSelector(FlowValidator.InvalidTarget.selector, address(0xDD)));
         validator.validate(address(0xDD), 0, data);
     }
 

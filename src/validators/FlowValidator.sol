@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 pragma solidity ^0.8.28;
 
-import {AccessControlEnumerable} from
-    "lib/openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol";
+import {
+    AccessControlEnumerable
+} from "lib/openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol";
 import {IERC4626} from "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 
 import {IValidator} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/src/interface/IValidator.sol";
@@ -11,7 +12,6 @@ import {ISablierFlow, UD21x18} from "src/interfaces/sablier/ISablierFlow.sol";
 /// @title FlowValidator
 /// @notice Transaction validator for the Safe Guard that checks adjustRatePerSecond calls
 ///         don't push the effective APR (relative to vault totalAssets) above a per-stream cap.
-///         Passes through all other transactions without validation.
 contract FlowValidator is IValidator, AccessControlEnumerable {
     /// @notice A stream ID paired with its maximum allowed APR
     struct StreamLimit {
@@ -37,6 +37,7 @@ contract FlowValidator is IValidator, AccessControlEnumerable {
     /// @notice Array of stream limits (small set, iterated linearly)
     StreamLimit[] private _limits;
 
+    error InvalidTarget(address target);
     error InvalidFunctionSelector(bytes4 selector);
     error StreamNotFound(uint256 streamId);
     error RateExceedsMaxApr(uint256 streamId, uint128 rate, uint256 effectiveApr, uint256 maxApr);
@@ -57,13 +58,15 @@ contract FlowValidator is IValidator, AccessControlEnumerable {
         }
     }
 
-    /// @notice Validate a module transaction. Only checks adjustRatePerSecond calls to the flow contract.
-    /// @dev Reverts with RateExceedsMaxApr if the new rate implies an APR above the stream's cap.
-    ///      All other transactions pass through.
+    /// @notice Validate a module transaction against the configured Sablier Flow contract.
+    /// @dev Reverts if the target is not the configured Flow contract, if the selector is not
+    ///      `adjustRatePerSecond`, or if the new rate implies an APR above the stream's cap.
     /// @param target The address the transaction is sent to
     /// @param data The calldata of the transaction
     function validate(address target, uint256, bytes calldata data) external view override {
-        if (target != flow) return;
+        if (target != flow) {
+            revert InvalidTarget(target);
+        }
 
         bytes4 selector = bytes4(data[:4]);
         if (selector != ISablierFlow.adjustRatePerSecond.selector) {
