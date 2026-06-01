@@ -273,16 +273,14 @@ contract SablierIntegrationTest is Test {
         assertEq(approveRule.paramRules[0].allowList[1], address(batchLockup), "Second spender should be BatchLockup");
 
         // Check create stream rule with validator
-        IVault.FunctionRule memory createRule = IVault(address(strategy)).getProcessorRule(
-            address(sablier), ISablierLockupLinear.createWithTimestampsLL.selector
-        );
+        IVault.FunctionRule memory createRule = IVault(address(strategy))
+            .getProcessorRule(address(sablier), ISablierLockupLinear.createWithTimestampsLL.selector);
         assertTrue(createRule.isActive, "Create stream rule should be active");
         assertEq(address(createRule.validator), address(validator), "Validator should be set");
 
         // Check batch create stream rule with validator
-        IVault.FunctionRule memory batchCreateRule = IVault(address(strategy)).getProcessorRule(
-            address(batchLockup), ISablierBatchLockup.createWithTimestampsLL.selector
-        );
+        IVault.FunctionRule memory batchCreateRule = IVault(address(strategy))
+            .getProcessorRule(address(batchLockup), ISablierBatchLockup.createWithTimestampsLL.selector);
         assertTrue(batchCreateRule.isActive, "Batch create stream rule should be active");
         assertEq(address(batchCreateRule.validator), address(validator), "Batch validator should be set");
 
@@ -325,8 +323,7 @@ contract SablierIntegrationTest is Test {
             cancelable: true,
             transferable: true,
             timestamps: ISablierLockupLinear.Timestamps({
-                start: uint40(block.timestamp),
-                end: uint40(block.timestamp + 28 days)
+                start: uint40(block.timestamp), end: uint40(block.timestamp + 28 days)
             }),
             shape: ""
         });
@@ -377,8 +374,7 @@ contract SablierIntegrationTest is Test {
             cancelable: true,
             transferable: true,
             timestamps: ISablierLockupLinear.Timestamps({
-                start: uint40(block.timestamp),
-                end: uint40(block.timestamp + 28 days)
+                start: uint40(block.timestamp), end: uint40(block.timestamp + 28 days)
             }),
             cliffTime: 0,
             unlockAmounts: ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0}),
@@ -392,8 +388,7 @@ contract SablierIntegrationTest is Test {
             cancelable: true,
             transferable: true,
             timestamps: ISablierLockupLinear.Timestamps({
-                start: uint40(block.timestamp),
-                end: uint40(block.timestamp + 56 days)
+                start: uint40(block.timestamp), end: uint40(block.timestamp + 56 days)
             }),
             cliffTime: 0,
             unlockAmounts: ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0}),
@@ -407,8 +402,7 @@ contract SablierIntegrationTest is Test {
             cancelable: true,
             transferable: true,
             timestamps: ISablierLockupLinear.Timestamps({
-                start: uint40(block.timestamp),
-                end: uint40(block.timestamp + 14 days)
+                start: uint40(block.timestamp), end: uint40(block.timestamp + 14 days)
             }),
             cliffTime: 0,
             unlockAmounts: ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0}),
@@ -508,8 +502,7 @@ contract SablierIntegrationTest is Test {
             cancelable: true,
             transferable: true,
             timestamps: ISablierLockupLinear.Timestamps({
-                start: uint40(block.timestamp),
-                end: uint40(block.timestamp + 28 days)
+                start: uint40(block.timestamp), end: uint40(block.timestamp + 28 days)
             }),
             shape: ""
         });
@@ -546,8 +539,7 @@ contract SablierIntegrationTest is Test {
             cancelable: true,
             transferable: true,
             timestamps: ISablierLockupLinear.Timestamps({
-                start: uint40(block.timestamp),
-                end: uint40(block.timestamp + 28 days)
+                start: uint40(block.timestamp), end: uint40(block.timestamp + 28 days)
             }),
             shape: ""
         });
@@ -583,8 +575,7 @@ contract SablierIntegrationTest is Test {
             cancelable: false, // WRONG - must be true
             transferable: true,
             timestamps: ISablierLockupLinear.Timestamps({
-                start: uint40(block.timestamp),
-                end: uint40(block.timestamp + 28 days)
+                start: uint40(block.timestamp), end: uint40(block.timestamp + 28 days)
             }),
             shape: ""
         });
@@ -618,8 +609,7 @@ contract SablierIntegrationTest is Test {
             cancelable: true,
             transferable: false, // WRONG - must be true
             timestamps: ISablierLockupLinear.Timestamps({
-                start: uint40(block.timestamp),
-                end: uint40(block.timestamp + 28 days)
+                start: uint40(block.timestamp), end: uint40(block.timestamp + 28 days)
             }),
             shape: ""
         });
@@ -654,8 +644,7 @@ contract SablierIntegrationTest is Test {
             cancelable: true,
             transferable: true,
             timestamps: ISablierLockupLinear.Timestamps({
-                start: uint40(block.timestamp),
-                end: uint40(block.timestamp + 28 days)
+                start: uint40(block.timestamp), end: uint40(block.timestamp + 28 days)
             }),
             shape: ""
         });
@@ -722,8 +711,7 @@ contract SablierIntegrationTest is Test {
                 cancelable: true,
                 transferable: true,
                 timestamps: ISablierLockupLinear.Timestamps({
-                    start: uint40(block.timestamp),
-                    end: uint40(block.timestamp + 28 days)
+                    start: uint40(block.timestamp), end: uint40(block.timestamp + 28 days)
                 }),
                 cliffTime: 0,
                 unlockAmounts: ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0}),
@@ -968,8 +956,7 @@ contract StrategyKeeperSablierValidatorIntegrationTest is Test {
             cancelable: true,
             transferable: true,
             timestamps: ISablierLockupLinear.Timestamps({
-                start: uint40(block.timestamp),
-                end: uint40(block.timestamp + 28 days)
+                start: uint40(block.timestamp), end: uint40(block.timestamp + 28 days)
             }),
             shape: ""
         });
@@ -992,8 +979,7 @@ contract StrategyKeeperSablierValidatorIntegrationTest is Test {
             cancelable: true,
             transferable: true,
             timestamps: ISablierLockupLinear.Timestamps({
-                start: uint40(block.timestamp),
-                end: uint40(block.timestamp + 28 days)
+                start: uint40(block.timestamp), end: uint40(block.timestamp + 28 days)
             }),
             cliffTime: 0,
             unlockAmounts: ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0}),
@@ -1019,8 +1005,7 @@ contract StrategyKeeperSablierValidatorIntegrationTest is Test {
                 cancelable: true,
                 transferable: true,
                 timestamps: ISablierLockupLinear.Timestamps({
-                    start: uint40(block.timestamp),
-                    end: uint40(block.timestamp + 28 days)
+                    start: uint40(block.timestamp), end: uint40(block.timestamp + 28 days)
                 }),
                 cliffTime: 0,
                 unlockAmounts: ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0}),
@@ -1055,8 +1040,7 @@ contract StrategyKeeperSablierValidatorIntegrationTest is Test {
             cancelable: true,
             transferable: true,
             timestamps: ISablierLockupLinear.Timestamps({
-                start: uint40(block.timestamp),
-                end: uint40(block.timestamp + 28 days)
+                start: uint40(block.timestamp), end: uint40(block.timestamp + 28 days)
             }),
             cliffTime: 0,
             unlockAmounts: ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0}),
@@ -1070,8 +1054,7 @@ contract StrategyKeeperSablierValidatorIntegrationTest is Test {
             cancelable: true,
             transferable: true,
             timestamps: ISablierLockupLinear.Timestamps({
-                start: uint40(block.timestamp),
-                end: uint40(block.timestamp + 28 days)
+                start: uint40(block.timestamp), end: uint40(block.timestamp + 28 days)
             }),
             cliffTime: 0,
             unlockAmounts: ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0}),
@@ -1109,8 +1092,7 @@ contract StrategyKeeperSablierValidatorIntegrationTest is Test {
             cancelable: true,
             transferable: true,
             timestamps: ISablierLockupLinear.Timestamps({
-                start: uint40(block.timestamp),
-                end: uint40(block.timestamp + 28 days)
+                start: uint40(block.timestamp), end: uint40(block.timestamp + 28 days)
             }),
             cliffTime: 0,
             unlockAmounts: ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0}),
