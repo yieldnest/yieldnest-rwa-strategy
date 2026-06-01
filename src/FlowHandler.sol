@@ -119,6 +119,10 @@ contract FlowHandler is BaseSafeModule {
         result.principal = disbursement.principal;
         result.fee = disbursement.fee;
 
+        // Important: if the stream already has uncovered debt, Sablier applies this deposit to
+        // past obligations first. In that case, the same computed interest deposit may not fully
+        // back the newly increased rate over the configured holding period, even though total
+        // funds remain fungible at the system level.
         _executeSafe($.token, abi.encodeCall(IERC20.approve, ($.flow, result.interest)));
         _executeSafe(
             $.flow, abi.encodeCall(ISablierFlow.deposit, ($.streamId, result.interest, safe(), $.streamRecipient))
