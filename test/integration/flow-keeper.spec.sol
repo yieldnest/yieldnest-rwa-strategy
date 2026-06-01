@@ -35,6 +35,11 @@ interface IPausableErrors {
     error EnforcedPause();
 }
 
+interface IProcessorVault {
+    function PROCESSOR_ROLE() external view returns (bytes32);
+    function grantRole(bytes32 role, address account) external;
+}
+
 /// @title FlowStrategyKeeperIntegrationTest
 /// @notice Fork tests using the deployed strategy Safe and the deployed YieldNest SafeGuard.
 ///         The FlowHandler is installed as a new Safe module, and SafeGuard module rules are
@@ -82,7 +87,7 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
         safeguard = ISafeGuard(SAFEGUARD);
 
         safe = accountingModule.safe();
-        vault = address(strategy);
+        vault = MainnetKeeperContracts.YNRWAX;
         targetStrategy = address(strategy);
 
         _assertExistingSafeState();
@@ -146,7 +151,7 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
         flowHandler.grantRole(flowHandler.DISBURSE_OPERATOR_ROLE(), address(keeper));
 
         vm.startPrank(admin);
-        strategy.grantRole(strategy.PROCESSOR_ROLE(), address(keeper));
+        IProcessorVault(vault).grantRole(IProcessorVault(vault).PROCESSOR_ROLE(), address(keeper));
         keeper.grantRole(keeper.POWER_KEEPER_ROLE(), powerKeeperBot);
         keeper.revokeRole(keeper.POWER_KEEPER_ROLE(), keeperBot);
         keeper.grantRole(keeper.DEFAULT_ADMIN_ROLE(), admin);
@@ -358,7 +363,7 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
     }
 
     function test_validatorBlocksExcessiveRate() public {
-        uint256 totalAssets = strategy.totalAssets();
+        uint256 totalAssets = IVault(vault).totalAssets();
         uint128 maxRate = uint128(MAX_APR * totalAssets / ((10 ** TOKEN_DECIMALS) * uint256(365 days)));
         bytes memory data = abi.encodeCall(ISablierFlow.adjustRatePerSecond, (streamId, UD21x18.wrap(maxRate + 1)));
 
@@ -423,6 +428,25 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
         );
     }
 
+    function test_initializeRequiresTargetStrategyToBeListedVaultAsset() public {
+        FlowStrategyKeeper invalidKeeper = new FlowStrategyKeeper(admin, address(this), admin, keeperBot);
+
+        vm.expectRevert(abi.encodeWithSelector(IFlowStrategyKeeper.InvalidTargetStrategy.selector, vault, safe));
+        invalidKeeper.initialize(
+            IFlowStrategyKeeper.FlowKeeperConfig({
+                vault: vault,
+                targetStrategy: safe,
+                safe: safe,
+                baseAsset: address(usdc),
+                flowHandler: address(flowHandler),
+                minThreshold: MIN_THRESHOLD,
+                minResidual: MIN_RESIDUAL,
+                minProcessingPercent: 0.01e18,
+                maxProcessingPercent: 0.01e18
+            })
+        );
+    }
+
     function test_setMaxProcessingPercent() public {
         uint256 newMaxProcessingPercent = 0.02e18;
 
@@ -475,7 +499,7 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
 
     function test_excessiveDisbursementRateIsRejectedByValidator() public {
         uint128 currentRate = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
-        uint128 maxRate = uint128(MAX_APR * strategy.totalAssets() / ((10 ** TOKEN_DECIMALS) * uint256(365 days)));
+        uint128 maxRate = uint128(MAX_APR * IVault(vault).totalAssets() / ((10 ** TOKEN_DECIMALS) * uint256(365 days)));
         uint256 available =
             ((uint256(maxRate - currentRate) + 1) * uint256(365 days) * (10 ** TOKEN_DECIMALS) + APR - 1) / APR;
         available += 1e6;
@@ -639,7 +663,7 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
     }
 
     function test_flowHandlerRejectsDisbursementExceedingMaxProcessingPercent() public {
-        uint256 vaultTotalAssets = strategy.totalAssets();
+        uint256 vaultTotalAssets = IVault(vault).totalAssets();
         uint256 available = vaultTotalAssets + 1;
         uint256 maxAllowed = vaultTotalAssets;
 
@@ -662,7 +686,7 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
         vm.prank(powerKeeperBot);
         keeper.processInflows(0, firstAvailable);
 
-        uint256 vaultTotalAssets = strategy.totalAssets();
+        uint256 vaultTotalAssets = IVault(vault).totalAssets();
         uint256 secondAvailable = vaultTotalAssets + 1;
         uint256 maxAllowed = vaultTotalAssets;
         vm.expectRevert(
@@ -733,7 +757,7 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
     }
 
     function _excessiveRateForDirectAdjustment() internal view returns (uint128 excessiveRate) {
-        uint256 totalAssets = strategy.totalAssets();
+        uint256 totalAssets = IVault(vault).totalAssets();
         uint128 maxRate = uint128(MAX_APR * totalAssets / ((10 ** TOKEN_DECIMALS) * uint256(365 days)));
         excessiveRate = maxRate + 1;
 
@@ -1003,7 +1027,7 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
         keeper.setMaxProcessingPercent(newMaxProcessingPercent);
 
         uint256 available = 100_000e6;
-        uint256 vaultTotalAssets = strategy.totalAssets();
+        uint256 vaultTotalAssets = IVault(vault).totalAssets();
         uint256 maxAllowed = (vaultTotalAssets * newMaxProcessingPercent) / 1e18;
 
         vm.expectRevert(
@@ -1029,7 +1053,7 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
 
         uint256 safeBalance = usdc.balanceOf(safe) + usdc.balanceOf(vault);
         uint256 available = safeBalance - MIN_RESIDUAL;
-        uint256 vaultTotalAssets = strategy.totalAssets();
+        uint256 vaultTotalAssets = IVault(vault).totalAssets();
         uint256 maxAllowed = (vaultTotalAssets * newMaxProcessingPercent) / 1e18;
 
         vm.expectRevert(

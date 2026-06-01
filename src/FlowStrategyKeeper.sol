@@ -9,6 +9,7 @@ import {Pausable} from "lib/openzeppelin-contracts/contracts/utils/Pausable.sol"
 import {Initializable} from "lib/openzeppelin-contracts/contracts/proxy/utils/Initializable.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
+import {IVault} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/src/interface/IVault.sol";
 
 import {FlowHandler} from "src/FlowHandler.sol";
 
@@ -32,6 +33,7 @@ interface IFlowStrategyKeeper {
     error InsufficientSafeBalance(uint256 balance, uint256 required);
     error InvalidConfiguration();
     error NoFundsToProcess();
+    error InvalidTargetStrategy(address vault, address targetStrategy);
     error ProcessingAmountExceedsMaxProcessingPercent(
         uint256 available, uint256 maxAllowed, uint256 vaultTotalAssets, uint256 maxProcessingPercent
     );
@@ -332,6 +334,9 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
         if (config_.maxProcessingPercent == 0 || config_.maxProcessingPercent > PRECISION) {
             revert InvalidConfiguration();
         }
+        if (!_isAssetListed(config_.vault, config_.targetStrategy)) {
+            revert InvalidTargetStrategy(config_.vault, config_.targetStrategy);
+        }
 
         _config = config_;
         emit ConfigUpdated(config_.vault, config_.safe);
@@ -370,6 +375,17 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
                 available, maxAllowed, vaultTotalAssets, cfg.maxProcessingPercent
             );
         }
+    }
+
+    function _isAssetListed(address vault_, address asset_) internal view returns (bool) {
+        address[] memory assets = IVault(vault_).getAssets();
+        uint256 length = assets.length;
+        for (uint256 i = 0; i < length; i++) {
+            if (assets[i] == asset_) {
+                return true;
+            }
+        }
+        return false;
     }
 }
 
