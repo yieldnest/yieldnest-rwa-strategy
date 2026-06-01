@@ -132,9 +132,16 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
                 flowHandler: address(flowHandler),
                 minThreshold: MIN_THRESHOLD,
                 minResidual: MIN_RESIDUAL,
-                minProcessingPercent: 0.01e18
+                minProcessingPercent: 0.01e18,
+                maxProcessingPercent: 0.01e18
             })
         );
+
+        // The contract defaults to 1%, but most integration paths in this suite exercise
+        // larger disbursements and should not be blocked by this repayment guard rail.
+        uint256 unrestrictedMaxProcessingPercent = keeper.PRECISION();
+        vm.prank(admin);
+        keeper.setMaxProcessingPercent(unrestrictedMaxProcessingPercent);
 
         flowHandler.grantRole(flowHandler.DISBURSE_OPERATOR_ROLE(), address(keeper));
 
@@ -393,6 +400,43 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
         assertEq(flowHandler.tokenDecimals(), TOKEN_DECIMALS);
         assertEq(flowHandler.apr(), APR);
         assertEq(flowHandler.holdingPeriod(), HOLDING_PERIOD);
+        assertEq(cfg.maxProcessingPercent, keeper.PRECISION());
+        assertEq(keeper.maxProcessingPercent(), keeper.PRECISION());
+    }
+
+    function test_initializeRequiresExplicitMaxProcessingPercent() public {
+        FlowStrategyKeeper explicitKeeper = new FlowStrategyKeeper(admin, address(this), admin, keeperBot);
+
+        vm.expectRevert(IFlowStrategyKeeper.InvalidConfiguration.selector);
+        explicitKeeper.initialize(
+            IFlowStrategyKeeper.FlowKeeperConfig({
+                vault: vault,
+                targetStrategy: targetStrategy,
+                safe: safe,
+                baseAsset: address(usdc),
+                flowHandler: address(flowHandler),
+                minThreshold: MIN_THRESHOLD,
+                minResidual: MIN_RESIDUAL,
+                minProcessingPercent: 0.01e18,
+                maxProcessingPercent: 0
+            })
+        );
+    }
+
+    function test_setMaxProcessingPercent() public {
+        uint256 newMaxProcessingPercent = 0.02e18;
+
+        vm.prank(admin);
+        keeper.setMaxProcessingPercent(newMaxProcessingPercent);
+
+        assertEq(keeper.maxProcessingPercent(), newMaxProcessingPercent);
+        assertEq(keeper.getConfig().maxProcessingPercent, newMaxProcessingPercent);
+    }
+
+    function test_revertOnSetMaxProcessingPercentZero() public {
+        vm.expectRevert(IFlowStrategyKeeper.InvalidConfiguration.selector);
+        vm.prank(admin);
+        keeper.setMaxProcessingPercent(0);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -594,50 +638,40 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
             );
     }
 
-    function test_flowHandlerSafeGuardRejectsExcessiveDisbursement() public {
-        uint128 currentRate = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
-        uint128 maxRate = uint128(MAX_APR * strategy.totalAssets() / ((10 ** TOKEN_DECIMALS) * uint256(365 days)));
-        uint256 available =
-            ((uint256(maxRate - currentRate) + 1) * uint256(365 days) * (10 ** TOKEN_DECIMALS) + APR - 1) / APR;
-        available += 1e6;
-        uint128 newRate = _expectedNewRateForDisbursement(available, currentRate);
-
-        assertGt(newRate, maxRate, "derived disbursement should exceed validator cap");
+    function test_flowHandlerRejectsDisbursementExceedingMaxProcessingPercent() public {
+        uint256 vaultTotalAssets = strategy.totalAssets();
+        uint256 available = vaultTotalAssets + 1;
+        uint256 maxAllowed = vaultTotalAssets;
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                FlowValidator.RateExceedsMaxApr.selector,
-                streamId,
-                newRate,
-                flowValidator.effectiveApr(newRate),
-                MAX_APR
+                IFlowStrategyKeeper.ProcessingAmountExceedsMaxProcessingPercent.selector,
+                available,
+                maxAllowed,
+                vaultTotalAssets,
+                keeper.PRECISION()
             )
         );
         vm.prank(powerKeeperBot);
         keeper.processInflows(0, available);
     }
 
-    function test_flowHandlerSafeGuardRejectsExcessiveDisbursementAfterPriorValidDisbursement() public {
+    function test_flowHandlerRejectsDisbursementExceedingMaxProcessingPercentAfterPriorValidDisbursement() public {
         uint256 firstAvailable = 100_000e6;
 
         vm.prank(powerKeeperBot);
         keeper.processInflows(0, firstAvailable);
 
-        uint128 currentRate = UD21x18.unwrap(sablierFlow.getRatePerSecond(streamId));
-        uint128 maxRate = uint128(MAX_APR * strategy.totalAssets() / ((10 ** TOKEN_DECIMALS) * uint256(365 days)));
-        uint256 secondAvailable = _availableToExceedRate(maxRate, currentRate);
-        uint128 newRate = _expectedNewRateForDisbursement(secondAvailable, currentRate);
-
-        assertLt(currentRate, maxRate, "first disbursement should stay below cap");
-        assertGt(newRate, maxRate, "second disbursement should exceed remaining rate headroom");
-
+        uint256 vaultTotalAssets = strategy.totalAssets();
+        uint256 secondAvailable = vaultTotalAssets + 1;
+        uint256 maxAllowed = vaultTotalAssets;
         vm.expectRevert(
             abi.encodeWithSelector(
-                FlowValidator.RateExceedsMaxApr.selector,
-                streamId,
-                newRate,
-                flowValidator.effectiveApr(newRate),
-                MAX_APR
+                IFlowStrategyKeeper.ProcessingAmountExceedsMaxProcessingPercent.selector,
+                secondAvailable,
+                maxAllowed,
+                vaultTotalAssets,
+                keeper.PRECISION()
             )
         );
         vm.prank(powerKeeperBot);
@@ -961,6 +995,54 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
         vm.expectRevert(abi.encodeWithSelector(IFlowStrategyKeeper.InsufficientSafeBalance.selector, balance, required));
         vm.prank(powerKeeperBot);
         keeper.processInflows(0, 100_000_000e6);
+    }
+
+    function test_revertOnManualProcessInflowsExceedingMaxProcessingPercent() public {
+        uint256 newMaxProcessingPercent = 0.0001e18;
+        vm.prank(admin);
+        keeper.setMaxProcessingPercent(newMaxProcessingPercent);
+
+        uint256 available = 100_000e6;
+        uint256 vaultTotalAssets = strategy.totalAssets();
+        uint256 maxAllowed = (vaultTotalAssets * newMaxProcessingPercent) / 1e18;
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IFlowStrategyKeeper.ProcessingAmountExceedsMaxProcessingPercent.selector,
+                available,
+                maxAllowed,
+                vaultTotalAssets,
+                newMaxProcessingPercent
+            )
+        );
+        vm.prank(powerKeeperBot);
+        keeper.processInflows(0, available);
+    }
+
+    function test_revertOnComputedProcessInflowsExceedingMaxProcessingPercent() public {
+        uint256 newMaxProcessingPercent = 0.0001e18;
+        vm.prank(admin);
+        keeper.setMaxProcessingPercent(newMaxProcessingPercent);
+
+        vm.prank(USDC_WHALE);
+        usdc.transfer(vault, MIN_THRESHOLD);
+
+        uint256 safeBalance = usdc.balanceOf(safe) + usdc.balanceOf(vault);
+        uint256 available = safeBalance - MIN_RESIDUAL;
+        uint256 vaultTotalAssets = strategy.totalAssets();
+        uint256 maxAllowed = (vaultTotalAssets * newMaxProcessingPercent) / 1e18;
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IFlowStrategyKeeper.ProcessingAmountExceedsMaxProcessingPercent.selector,
+                available,
+                maxAllowed,
+                vaultTotalAssets,
+                newMaxProcessingPercent
+            )
+        );
+        vm.prank(keeperBot);
+        keeper.processInflows();
     }
 
     function test_pauseBlocksProcessing() public {

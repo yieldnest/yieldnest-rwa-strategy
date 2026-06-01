@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 pragma solidity ^0.8.28;
 
-import {AccessControlEnumerable} from
-    "lib/openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol";
+import {
+    AccessControlEnumerable
+} from "lib/openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol";
 import {ReentrancyGuard} from "lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "lib/openzeppelin-contracts/contracts/utils/Pausable.sol";
 import {Initializable} from "lib/openzeppelin-contracts/contracts/proxy/utils/Initializable.sol";
@@ -24,12 +25,16 @@ interface IFlowStrategyKeeper {
         uint256 minThreshold; // Minimum vault balance to trigger allocation
         uint256 minResidual; // Minimum to keep in Safe after disbursement
         uint256 minProcessingPercent; // Min % of vault total for time-based fallback (1e18 = 100%)
+        uint256 maxProcessingPercent; // Max disbursable % of vault totalAssets (1e18 = 100%)
     }
 
     error ZeroAddress();
     error InsufficientSafeBalance(uint256 balance, uint256 required);
     error InvalidConfiguration();
     error NoFundsToProcess();
+    error ProcessingAmountExceedsMaxProcessingPercent(
+        uint256 available, uint256 maxAllowed, uint256 vaultTotalAssets, uint256 maxProcessingPercent
+    );
 
     event KeeperExecuted(
         uint256 indexed timestamp,
@@ -53,13 +58,7 @@ interface IFlowStrategyKeeper {
 /// @dev Deployed directly (no proxy). NOT a Safe module — all Safe interactions go through FlowHandler.
 ///      Delegates all fund disbursement to FlowHandler.disburse() which handles interest computation,
 ///      stream deposit, rate adjustment, and principal/fee transfers.
-contract FlowStrategyKeeper is
-    IFlowStrategyKeeper,
-    AccessControlEnumerable,
-    ReentrancyGuard,
-    Pausable,
-    Initializable
-{
+contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, ReentrancyGuard, Pausable, Initializable {
     /// @notice Role required to call the keeper function (on-chain computed parameters)
     bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
 
@@ -130,6 +129,12 @@ contract FlowStrategyKeeper is
         (bool shouldExecute, uint256 vaultAllocation) = _shouldProcess(cfg);
         if (!shouldExecute) revert NoFundsToProcess();
 
+        // Validate the projected disbursement before moving funds into the Safe.
+        uint256 projectedSafeBalance = IERC20(cfg.baseAsset).balanceOf(cfg.safe) + vaultAllocation;
+        if (projectedSafeBalance <= cfg.minResidual) revert NoFundsToProcess();
+        uint256 projectedAvailable = projectedSafeBalance - cfg.minResidual;
+        _validateProcessingAmount(cfg, projectedAvailable);
+
         // 2. Allocate vault funds if needed (sends funds to safe via strategy)
         if (vaultAllocation > 0) {
             _allocateToStrategy(cfg, vaultAllocation);
@@ -184,6 +189,8 @@ contract FlowStrategyKeeper is
         uint256 available,
         uint256 safeBalance
     ) internal {
+        _validateProcessingAmount(cfg, available);
+
         FlowHandler flowHandler = FlowHandler(cfg.flowHandler);
 
         // Single call: deposits interest to stream, adjusts rate, transfers principal and fee
@@ -305,6 +312,14 @@ contract FlowStrategyKeeper is
         _setConfig(config_);
     }
 
+    /// @notice Update the max disbursable share of vault totalAssets.
+    /// @dev Value is expressed with 18 decimals where 1e18 = 100%.
+    /// @param maxProcessingPercent_ New max processing percent
+    function setMaxProcessingPercent(uint256 maxProcessingPercent_) external onlyRole(CONFIG_MANAGER_ROLE) {
+        if (maxProcessingPercent_ == 0 || maxProcessingPercent_ > PRECISION) revert InvalidConfiguration();
+        _config.maxProcessingPercent = maxProcessingPercent_;
+    }
+
     /// @notice Internal function to set configuration
     /// @param config_ New configuration
     function _setConfig(FlowKeeperConfig calldata config_) internal {
@@ -314,6 +329,9 @@ contract FlowStrategyKeeper is
         if (config_.baseAsset == address(0)) revert ZeroAddress();
         if (config_.flowHandler == address(0)) revert ZeroAddress();
         if (config_.minProcessingPercent > PRECISION) revert InvalidConfiguration();
+        if (config_.maxProcessingPercent == 0 || config_.maxProcessingPercent > PRECISION) {
+            revert InvalidConfiguration();
+        }
 
         _config = config_;
         emit ConfigUpdated(config_.vault, config_.safe);
@@ -323,6 +341,12 @@ contract FlowStrategyKeeper is
     /// @return config The current keeper configuration
     function getConfig() external view returns (FlowKeeperConfig memory config) {
         return _config;
+    }
+
+    /// @notice Get the max disbursable share of vault totalAssets.
+    /// @return percent Max processing percent (1e18 = 100%)
+    function maxProcessingPercent() external view returns (uint256 percent) {
+        return _config.maxProcessingPercent;
     }
 
     /// @notice Pause the keeper
@@ -335,6 +359,17 @@ contract FlowStrategyKeeper is
     /// @dev Only callable by PAUSER_ROLE
     function unpause() external onlyRole(PAUSER_ROLE) {
         _unpause();
+    }
+
+    function _validateProcessingAmount(FlowKeeperConfig memory cfg, uint256 available) internal view {
+        uint256 vaultTotalAssets = IERC4626(cfg.vault).totalAssets();
+        uint256 maxAllowed = (vaultTotalAssets * cfg.maxProcessingPercent) / PRECISION;
+
+        if (available > maxAllowed) {
+            revert ProcessingAmountExceedsMaxProcessingPercent(
+                available, maxAllowed, vaultTotalAssets, cfg.maxProcessingPercent
+            );
+        }
     }
 }
 
