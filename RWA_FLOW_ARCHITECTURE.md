@@ -221,6 +221,13 @@ If the Flow stream is underfunded:
 - uncovered debt accumulates while the stream is insolvent
 - once new funds are deposited, those funds first cover accrued debt
 
+Operational implication:
+
+- the system tolerates brief insolvency and later catch-up funding
+- a later top-up can still make the recipient economically whole
+- but a disbursement should not be interpreted as buying a fully fresh standalone `holdingPeriod` of runway if uncovered debt already existed beforehand
+- in that case, the main difference is timing and depletion behavior, not the eventual total amount owed
+
 If the Flow stream is paused:
 
 - the rate is `0`

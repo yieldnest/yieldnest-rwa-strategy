@@ -12,6 +12,23 @@ Important operational note:
 - Before executing anything, resolve that discrepancy and treat one timestamp as canonical.
 - This runbook assumes the canonical cutover time is `2026-06-07 15:00 UTC`.
 
+## Operating Assumption
+
+This system tolerates brief stream insolvency and later catch-up funding.
+
+That means:
+
+- `FlowHandler.disburse()` should not be interpreted as guaranteeing a fully fresh `holdingPeriod` of runway by itself
+- if the stream already has `uncoveredDebt`, a new interest deposit first satisfies past debt before backing future streaming
+- total funds remain fungible at the system level, so later top-ups can still make the recipient whole
+- the main effect of pre-existing uncovered debt is on timing and depletion, not on the eventual total amount owed
+
+Operationally, this means:
+
+- a disbursement can still be correct even if the stream is briefly insolvent
+- dashboards and monitoring should not assume that every disbursement independently buys a full new `holdingPeriod` of solvency
+- if continuous solvency becomes a hard requirement later, `disburse()` semantics will need to change
+
 ## Scope
 
 The target system is:
@@ -184,9 +201,8 @@ Deploy a `TransparentUpgradeableProxy` pointing to the implementation, with `ini
 - `feeFraction = configured fee fraction`
 
 Important:
-
-- `FlowHandler.initialize()` does not currently verify that `safe`, `token`, and `streamRecipient` actually match the underlying Flow stream.
-- Verify those fields manually before activation.
+- `FlowHandler.initialize()` now asserts that the configured `safe`, `token`, and `streamRecipient` match the underlying Flow stream.
+- You should still verify those values operationally before activation.
 
 ### 5. Enable `FlowHandler` As A Safe Module
 
