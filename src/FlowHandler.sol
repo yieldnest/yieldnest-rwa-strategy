@@ -43,6 +43,9 @@ contract FlowHandler is BaseSafeModule {
     error InvalidHoldingPeriod();
     error InvalidApr();
     error InvalidFeeFraction();
+    error InvalidStreamSender(address actualSender, address expectedSender);
+    error InvalidStreamToken(address actualToken, address expectedToken);
+    error InvalidStreamRecipient(address actualRecipient, address expectedRecipient);
     error ZeroAddress();
 
     event RateDecreased(uint128 previousRate, uint128 newRate, uint128 interest, uint256 loanAmount);
@@ -188,7 +191,23 @@ contract FlowHandler is BaseSafeModule {
         $.streamId = params.streamId;
         $.token = params.token;
         $.streamRecipient = params.streamRecipient;
-        $.tokenDecimals = ISablierFlow(params.flow).getTokenDecimals(params.streamId);
+        ISablierFlow flow = ISablierFlow(params.flow);
+        address actualSender = flow.getSender(params.streamId);
+        if (actualSender != safe()) {
+            revert InvalidStreamSender(actualSender, safe());
+        }
+
+        address actualToken = address(flow.getToken(params.streamId));
+        if (actualToken != params.token) {
+            revert InvalidStreamToken(actualToken, params.token);
+        }
+
+        address actualRecipient = flow.getRecipient(params.streamId);
+        if (actualRecipient != params.streamRecipient) {
+            revert InvalidStreamRecipient(actualRecipient, params.streamRecipient);
+        }
+
+        $.tokenDecimals = flow.getTokenDecimals(params.streamId);
         $.apr = params.apr;
         $.holdingPeriod = params.holdingPeriod;
         $.maxRateDelta = params.maxRateDelta;
