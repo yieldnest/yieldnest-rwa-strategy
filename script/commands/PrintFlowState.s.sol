@@ -6,15 +6,24 @@ import {console2} from "forge-std/console2.sol";
 import {IERC20Metadata} from "lib/openzeppelin-contracts/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {ISablierFlow, UD21x18} from "@src/interfaces/sablier/ISablierFlow.sol";
 import {MainnetKeeperContracts} from "@script/Contracts.sol";
+import {Prompt} from "@script/utils/Prompt.sol";
 
 /// @notice Prints the state of a Sablier Flow stream.
 /// @dev Usage:
-///      STREAM_ID=<id> forge script script/commands/PrintFlowState.s.sol:PrintFlowState --rpc-url <RPC_URL>
-///      FLOW=<flow_address> STREAM_ID=<id> forge script script/commands/PrintFlowState.s.sol:PrintFlowState --rpc-url <RPC_URL>
+///      forge script script/commands/PrintFlowState.s.sol:PrintFlowState --rpc-url <RPC_URL>
+///      forge script script/commands/PrintFlowState.s.sol:PrintFlowState --sig "run(address)" <flow> --rpc-url <RPC_URL>
 contract PrintFlowState is Script {
-    function run() external view {
-        uint256 streamId = vm.envUint("STREAM_ID");
-        address flowAddress = vm.envOr("FLOW", MainnetKeeperContracts.SABLIER_FLOW);
+    function run() external {
+        uint256 streamId = Prompt.forUint("Stream ID");
+        _run(streamId, MainnetKeeperContracts.SABLIER_FLOW);
+    }
+
+    function run(address flowAddress) external {
+        uint256 streamId = Prompt.forUint("Stream ID");
+        _run(streamId, flowAddress);
+    }
+
+    function _run(uint256 streamId, address flowAddress) internal view {
         ISablierFlow flow = ISablierFlow(flowAddress);
 
         console2.log("flow", flowAddress);
