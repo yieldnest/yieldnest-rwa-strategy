@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "lib/openzeppelin-contracts/contracts/token/ERC721/IERC721.sol";
 import {IVault} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/src/interface/IVault.sol";
 import {IValidator} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/src/interface/IValidator.sol";
 import {
@@ -455,6 +456,24 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
 
         assertEq(keeper.maxProcessingPercent(), newMaxProcessingPercent);
         assertEq(keeper.getConfig().maxProcessingPercent, newMaxProcessingPercent);
+    }
+
+    function test_setStreamRecipientRequiresLiveFlowRecipient() public {
+        address newRecipient = address(0x4444);
+
+        vm.prank(streamReceiver);
+        IERC721(address(sablierFlow)).transferFrom(streamReceiver, newRecipient, streamId);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(FlowHandler.InvalidStreamRecipient.selector, newRecipient, streamReceiver)
+        );
+        vm.prank(admin);
+        flowHandler.setStreamRecipient(streamReceiver);
+
+        vm.prank(admin);
+        flowHandler.setStreamRecipient(newRecipient);
+
+        assertEq(flowHandler.streamRecipient(), newRecipient);
     }
 
     function test_flowHandlerInitializeRejectsHoldingPeriodAboveOneYear() public {

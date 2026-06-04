@@ -245,12 +245,16 @@ contract FlowHandler is BaseSafeModule {
 
     /// @notice Update the locally configured stream recipient used for Flow deposit validation.
     /// @dev This does not change the actual Sablier stream NFT owner / recipient on the Flow contract.
-    ///      It is intentionally decoupled so operations can keep FlowHandler aligned with the live stream recipient.
-    ///      If the transferable stream NFT moves to a new owner, this value must also be updated before disbursements.
-    ///      This is by design to avoid depositing against a stale recipient configuration.
+    ///      The configured value must match the live Flow recipient for the current stream.
+    ///      This is intentionally strict to prevent storing a stale recipient that would later break deposits.
     /// @param _streamRecipient New stream recipient address
     function setStreamRecipient(address _streamRecipient) external onlyRole(MANAGER_ROLE) {
         if (_streamRecipient == address(0)) revert ZeroAddress();
+        address actualRecipient =
+            ISablierFlow(_getFlowHandlerStorage().flow).getRecipient(_getFlowHandlerStorage().streamId);
+        if (actualRecipient != _streamRecipient) {
+            revert InvalidStreamRecipient(actualRecipient, _streamRecipient);
+        }
         _getFlowHandlerStorage().streamRecipient = _streamRecipient;
         emit StreamRecipientUpdated(_streamRecipient);
     }
