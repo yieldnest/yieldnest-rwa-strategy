@@ -59,7 +59,7 @@ So the migration is operationally straightforward, but not yet one-click automat
 Use the existing mainnet constants already referenced by the integration suite:
 
 - `USDC`: `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48`
-- `Sablier Flow`: `0x7a86d3e6894f9c5B5f25FFBDAaE658CFc7569623`
+- `Sablier Flow`: `0x844344Cd871B28221d725ecE9630E8bDE4E3a181`
 - `FlexStrategy`: `0xF6e1443e3F70724cec8C0a779C7C35A8DcDA928B`
 - `Rewards Sweeper`: `0xbAC19FD66262629eEA13F1fd36ba9ae654bDfc76`
 - `Borrower`: `0xaa7f79Bb105833D655D1C13C175142c44e209912`
