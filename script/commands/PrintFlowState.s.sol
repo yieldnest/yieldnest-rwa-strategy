@@ -11,16 +11,10 @@ import {Prompt} from "@script/utils/Prompt.sol";
 /// @notice Prints the state of a Sablier Flow stream.
 /// @dev Usage:
 ///      forge script script/commands/PrintFlowState.s.sol:PrintFlowState --rpc-url <RPC_URL>
-///      forge script script/commands/PrintFlowState.s.sol:PrintFlowState --sig "run(address)" <flow> --rpc-url <RPC_URL>
 contract PrintFlowState is Script {
     function run() external {
         uint256 streamId = Prompt.forUint("Stream ID");
         _run(streamId, MainnetKeeperContracts.SABLIER_FLOW);
-    }
-
-    function run(address flowAddress) external {
-        uint256 streamId = Prompt.forUint("Stream ID");
-        _run(streamId, flowAddress);
     }
 
     function _run(uint256 streamId, address flowAddress) internal view {
