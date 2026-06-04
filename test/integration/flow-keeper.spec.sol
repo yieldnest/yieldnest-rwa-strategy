@@ -127,7 +127,7 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
         vm.prank(safe);
         IGnosisSafe(safe).enableModule(address(flowHandler));
 
-        keeper = new FlowStrategyKeeper(admin, address(this), admin, keeperBot);
+        keeper = new FlowStrategyKeeper(admin, admin, address(this), admin, keeperBot);
         keeper.initialize(
             IFlowStrategyKeeper.FlowKeeperConfig({
                 vault: vault,
@@ -410,7 +410,7 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
     }
 
     function test_initializeRequiresExplicitMaxProcessingPercent() public {
-        FlowStrategyKeeper explicitKeeper = new FlowStrategyKeeper(admin, address(this), admin, keeperBot);
+        FlowStrategyKeeper explicitKeeper = new FlowStrategyKeeper(admin, admin, address(this), admin, keeperBot);
 
         vm.expectRevert(IFlowStrategyKeeper.InvalidConfiguration.selector);
         explicitKeeper.initialize(
@@ -429,7 +429,7 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
     }
 
     function test_initializeRequiresTargetStrategyToBeListedVaultAsset() public {
-        FlowStrategyKeeper invalidKeeper = new FlowStrategyKeeper(admin, address(this), admin, keeperBot);
+        FlowStrategyKeeper invalidKeeper = new FlowStrategyKeeper(admin, admin, address(this), admin, keeperBot);
 
         vm.expectRevert(abi.encodeWithSelector(IFlowStrategyKeeper.InvalidTargetStrategy.selector, vault, safe));
         invalidKeeper.initialize(
@@ -455,6 +455,32 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
 
         assertEq(keeper.maxProcessingPercent(), newMaxProcessingPercent);
         assertEq(keeper.getConfig().maxProcessingPercent, newMaxProcessingPercent);
+    }
+
+    function test_flowHandlerInitializeRejectsHoldingPeriodAboveOneYear() public {
+        FlowHandler flowHandlerImpl = new FlowHandler();
+        bytes memory initData = abi.encodeCall(
+            FlowHandler.initialize,
+            (FlowHandler.InitParams({
+                    admin: address(this),
+                    safe: safe,
+                    safeGuard: address(safeguard),
+                    flow: address(sablierFlow),
+                    streamId: streamId,
+                    token: address(usdc),
+                    streamRecipient: streamReceiver,
+                    apr: APR,
+                    holdingPeriod: 365 days + 1,
+                    maxRateDelta: 0,
+                    maxRate: 0,
+                    borrower: borrower,
+                    feeWallet: feeWallet,
+                    feeFraction: FEE_FRACTION
+                }))
+        );
+
+        vm.expectRevert(FlowHandler.InvalidHoldingPeriod.selector);
+        new TransparentUpgradeableProxy(address(flowHandlerImpl), proxyAdmin, initData);
     }
 
     function test_revertOnSetMaxProcessingPercentZero() public {

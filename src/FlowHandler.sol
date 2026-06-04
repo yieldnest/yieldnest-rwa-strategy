@@ -176,7 +176,7 @@ contract FlowHandler is BaseSafeModule {
     /// @param params Initialization parameters
     function initialize(InitParams calldata params) external initializer {
         if (params.apr == 0 || params.apr > FlowMath.PRECISION) revert InvalidApr();
-        if (params.holdingPeriod == 0) revert InvalidHoldingPeriod();
+        if (params.holdingPeriod == 0 || params.holdingPeriod > 365 days) revert InvalidHoldingPeriod();
         if (params.borrower == address(0)) revert ZeroAddress();
         if (params.feeWallet == address(0)) revert ZeroAddress();
         if (params.feeFraction < 2) revert InvalidFeeFraction();

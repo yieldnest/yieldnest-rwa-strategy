@@ -92,19 +92,20 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
     uint256 private _lastProcessedTimestamp;
 
     /// @notice Creates a new FlowStrategyKeeper
-    /// @param _admin Admin address that receives DEFAULT_ADMIN_ROLE, CONFIG_MANAGER_ROLE, and PAUSER_ROLE
+    /// @param _admin Admin address that receives DEFAULT_ADMIN_ROLE
+    /// @param _configManager Address that receives CONFIG_MANAGER_ROLE
     /// @param _initializer Address that can call initialize() once to set the config
-    /// @param _pauser Additional address that receives PAUSER_ROLE (e.g. YnDev)
+    /// @param _pauser Address that receives PAUSER_ROLE (e.g. YnDev or emergency operator)
     /// @param _processor Address that receives KEEPER_ROLE and POWER_KEEPER_ROLE
-    constructor(address _admin, address _initializer, address _pauser, address _processor) {
+    constructor(address _admin, address _configManager, address _initializer, address _pauser, address _processor) {
         if (_admin == address(0)) revert ZeroAddress();
+        if (_configManager == address(0)) revert ZeroAddress();
         if (_initializer == address(0)) revert ZeroAddress();
         if (_pauser == address(0)) revert ZeroAddress();
         if (_processor == address(0)) revert ZeroAddress();
 
         _grantRole(DEFAULT_ADMIN_ROLE, _admin);
-        _grantRole(CONFIG_MANAGER_ROLE, _admin);
-        _grantRole(PAUSER_ROLE, _admin);
+        _grantRole(CONFIG_MANAGER_ROLE, _configManager);
 
         _grantRole(INITIALIZER_ROLE, _initializer);
 
