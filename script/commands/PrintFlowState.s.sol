@@ -45,17 +45,16 @@ contract PrintFlowState is Script {
     }
 
     function _printStatus(ISablierFlow flow, uint256 streamId) internal view {
+        uint256 ratePerSecond = uint256(UD21x18.unwrap(flow.getRatePerSecond(streamId)));
+
         console2.log("balance", uint256(flow.getBalance(streamId)));
-        console2.log("ratePerSecond", uint256(UD21x18.unwrap(flow.getRatePerSecond(streamId))));
+        console2.log("ratePerSecond", ratePerSecond);
         console2.log("snapshotTime", uint256(flow.getSnapshotTime(streamId)));
-        try flow.isPaused(streamId) returns (bool paused) {
-            console2.log("paused", paused);
-        } catch {
-            _logUnavailable("paused");
-        }
         try flow.isVoided(streamId) returns (bool voided) {
+            console2.log("paused", ratePerSecond == 0 && !voided);
             console2.log("voided", voided);
         } catch {
+            _logUnavailable("paused");
             _logUnavailable("voided");
         }
         try flow.isTransferable(streamId) returns (bool transferable) {

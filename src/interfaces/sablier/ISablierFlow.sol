@@ -132,9 +132,6 @@ interface ISablierFlow {
     /// @notice Returns the token's decimals.
     function getTokenDecimals(uint256 streamId) external view returns (uint8 tokenDecimals);
 
-    /// @notice Returns whether the stream is paused (rate == 0 and not voided).
-    function isPaused(uint256 streamId) external view returns (bool result);
-
     /// @notice Returns whether the stream ID corresponds to an existing stream.
     function isStream(uint256 streamId) external view returns (bool result);
 
