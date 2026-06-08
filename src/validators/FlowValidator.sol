@@ -39,6 +39,7 @@ contract FlowValidator is IValidator, AccessControlEnumerable {
 
     error InvalidTarget(address target);
     error InvalidFunctionSelector(bytes4 selector);
+    error UnsupportedTokenDecimals(uint8 decimals);
     error StreamNotFound(uint256 streamId);
     error RateExceedsMaxApr(uint256 streamId, uint128 rate, uint256 effectiveApr, uint256 maxApr);
 
@@ -48,6 +49,9 @@ contract FlowValidator is IValidator, AccessControlEnumerable {
     bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
 
     constructor(address _flow, address _vault, uint8 _tokenDecimals, StreamLimit[] memory limits_, address admin_) {
+        if (_tokenDecimals > 18) {
+            revert UnsupportedTokenDecimals(_tokenDecimals);
+        }
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
         _grantRole(MANAGER_ROLE, admin_);
         flow = _flow;

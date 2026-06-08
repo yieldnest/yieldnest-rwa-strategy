@@ -60,6 +60,14 @@ contract FlowValidatorTest is Test {
         assertEq(v.getMaxApr(3), 0.2e18);
     }
 
+    function test_constructorRevertsForDecimalsAbove18() public {
+        FlowValidator.StreamLimit[] memory limits = new FlowValidator.StreamLimit[](1);
+        limits[0] = FlowValidator.StreamLimit({streamId: STREAM_ID, maxApr: MAX_APR});
+
+        vm.expectRevert(abi.encodeWithSelector(FlowValidator.UnsupportedTokenDecimals.selector, uint8(19)));
+        new FlowValidator(flow, vaultAddr, 19, limits, owner);
+    }
+
     /*//////////////////////////////////////////////////////////////
                         VALIDATE — TARGET / SELECTOR
     //////////////////////////////////////////////////////////////*/
