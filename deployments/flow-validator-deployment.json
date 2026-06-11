@@ -1,0 +1,11 @@
+{
+  "admin": "0xfcad670592a3b24869C0b51a6c6FDED4F95D6975",
+  "chainId": 1,
+  "deploymentTimestamp": 1781219975,
+  "flow": "0x844344Cd871B28221d725ecE9630E8bDE4E3a181",
+  "maxApr": 115000000000000000,
+  "streamId": 11,
+  "tokenDecimals": 6,
+  "validator": "0x0E013f48d8B0969c749a325E3f1ac3119641167E",
+  "vault": "0x01Ba69727E2860b37bc1a2bd56999c1aFb4C15D8"
+}
