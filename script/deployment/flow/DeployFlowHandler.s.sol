@@ -8,7 +8,6 @@ import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transpa
 import {FlowHandler} from "@src/FlowHandler.sol";
 import {MainnetKeeperContracts} from "@script/Contracts.sol";
 import {MainnetStrategyActors} from "@script/Actors.sol";
-import {Prompt} from "@script/utils/Prompt.sol";
 
 /// @notice Deploy FlowHandler implementation + proxy and initialize it for a target stream.
 contract DeployFlowHandler is Script {
@@ -28,36 +27,29 @@ contract DeployFlowHandler is Script {
         console2.log("token", MainnetKeeperContracts.USDC);
         console2.log("recipient", MainnetKeeperContracts.REWARDS_SWEEPER);
 
-        uint256 streamId = _promptUintWithDefault("Stream ID", MainnetKeeperContracts.DEFAULT_FLOW_STREAM_ID);
-        address admin = _promptAddressWithDefault("FlowHandler admin", new MainnetStrategyActors().ADMIN());
-        address proxyAdmin = _promptAddressWithDefault("Proxy admin", new MainnetStrategyActors().ADMIN());
-        uint256 apr = _promptUintWithDefault("APR (1e18 = 100%)", DEFAULT_APR);
-        uint256 holdingPeriod = _promptUintWithDefault("Holding period (seconds)", DEFAULT_HOLDING_PERIOD);
-        uint128 maxRateDelta = uint128(_promptUintWithDefault("Max rate delta (0 = unlimited)", 0));
-        uint128 maxRate = uint128(_promptUintWithDefault("Max rate (0 = unlimited)", 0));
-        uint256 feeFraction = _promptUintWithDefault("Fee fraction", DEFAULT_FEE_FRACTION);
-
         FlowHandler.InitParams memory params = FlowHandler.InitParams({
-            admin: admin,
+            admin: new MainnetStrategyActors().ADMIN(),
             safe: new MainnetStrategyActors().SAFE(),
             safeGuard: 0x81e3E4224D9a2d66D9edbA6d4781d475AA65F01e,
             flow: MainnetKeeperContracts.SABLIER_FLOW,
-            streamId: streamId,
+            streamId: MainnetKeeperContracts.DEFAULT_FLOW_STREAM_ID,
             token: MainnetKeeperContracts.USDC,
             streamRecipient: MainnetKeeperContracts.REWARDS_SWEEPER,
-            apr: apr,
-            holdingPeriod: holdingPeriod,
-            maxRateDelta: maxRateDelta,
-            maxRate: maxRate,
+            apr: DEFAULT_APR,
+            holdingPeriod: DEFAULT_HOLDING_PERIOD,
+            maxRateDelta: 0,
+            maxRate: 0,
             borrower: MainnetKeeperContracts.BORROWER,
             feeWallet: MainnetKeeperContracts.FEE_WALLET,
-            feeFraction: feeFraction
+            feeFraction: DEFAULT_FEE_FRACTION
         });
 
         vm.startBroadcast();
         implementation = new FlowHandler();
         proxy = new TransparentUpgradeableProxy(
-            address(implementation), proxyAdmin, abi.encodeCall(FlowHandler.initialize, (params))
+            address(implementation),
+            new MainnetStrategyActors().ADMIN(),
+            abi.encodeCall(FlowHandler.initialize, (params))
         );
         vm.stopBroadcast();
 
@@ -65,17 +57,5 @@ contract DeployFlowHandler is Script {
 
         console2.log("implementation", address(implementation));
         console2.log("proxy", address(proxy));
-    }
-
-    function _promptAddressWithDefault(string memory label, address defaultValue) internal returns (address) {
-        string memory input = Prompt.forString(string.concat(label, " (blank = default)"));
-        if (bytes(input).length == 0) return defaultValue;
-        return vm.parseAddress(input);
-    }
-
-    function _promptUintWithDefault(string memory label, uint256 defaultValue) internal returns (uint256) {
-        string memory input = Prompt.forString(string.concat(label, " (blank = default)"));
-        if (bytes(input).length == 0) return defaultValue;
-        return vm.parseUint(input);
     }
 }

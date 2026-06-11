@@ -11,14 +11,16 @@ import {ISafeGuard} from "@src/interfaces/ISafeGuard.sol";
 import {ISablierFlow} from "@src/interfaces/sablier/ISablierFlow.sol";
 import {MainnetKeeperContracts} from "@script/Contracts.sol";
 import {MainnetStrategyActors} from "@script/Actors.sol";
-import {Prompt} from "@script/utils/Prompt.sol";
 
 /// @notice Configure the SafeGuard processor rules required by FlowHandler.
 contract ConfigureFlowSafeGuard is Script {
+    error MissingFlowValidator();
+
     function run() external {
-        address safe = _promptAddressWithDefault("Strategy Safe", new MainnetStrategyActors().SAFE());
-        address validator = Prompt.forAddress("FlowValidator");
-        address guardAddress = _promptAddressWithDefault("SafeGuard", 0x81e3E4224D9a2d66D9edbA6d4781d475AA65F01e);
+        address safe = new MainnetStrategyActors().SAFE();
+        address validator = vm.envOr("FLOW_VALIDATOR", address(0));
+        address guardAddress = 0x81e3E4224D9a2d66D9edbA6d4781d475AA65F01e;
+        if (validator == address(0)) revert MissingFlowValidator();
 
         console2.log("=== Configure Flow SafeGuard Rules ===");
         console2.log("guard", guardAddress);
@@ -103,11 +105,5 @@ contract ConfigureFlowSafeGuard is Script {
             IVault.ParamRule({paramType: IVault.ParamType.UINT256, isArray: false, allowList: new address[](0)});
 
         rule = IVault.FunctionRule({isActive: true, paramRules: paramRules, validator: IValidator(address(0))});
-    }
-
-    function _promptAddressWithDefault(string memory label, address defaultValue) internal returns (address) {
-        string memory input = Prompt.forString(string.concat(label, " (blank = default)"));
-        if (bytes(input).length == 0) return defaultValue;
-        return vm.parseAddress(input);
     }
 }

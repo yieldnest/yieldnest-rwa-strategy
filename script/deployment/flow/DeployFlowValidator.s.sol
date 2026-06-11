@@ -6,7 +6,6 @@ import {console2} from "forge-std/console2.sol";
 import {FlowValidator} from "@src/validators/FlowValidator.sol";
 import {MainnetKeeperContracts} from "@script/Contracts.sol";
 import {MainnetStrategyActors} from "@script/Actors.sol";
-import {Prompt} from "@script/utils/Prompt.sol";
 
 /// @notice Deploy a FlowValidator for a single stream on mainnet.
 contract DeployFlowValidator is Script {
@@ -21,31 +20,21 @@ contract DeployFlowValidator is Script {
         console2.log("default admin", new MainnetStrategyActors().ADMIN());
         console2.log("default maxApr", DEFAULT_MAX_APR);
 
-        uint256 streamId = _promptUintWithDefault("Stream ID", MainnetKeeperContracts.DEFAULT_FLOW_STREAM_ID);
-        uint256 maxApr = _promptUintWithDefault("Max APR (1e18 = 100%)", DEFAULT_MAX_APR);
-        address admin = _promptAddressWithDefault("Admin", new MainnetStrategyActors().ADMIN());
-
         FlowValidator.StreamLimit[] memory limits = new FlowValidator.StreamLimit[](1);
-        limits[0] = FlowValidator.StreamLimit({streamId: streamId, maxApr: maxApr});
+        limits[0] = FlowValidator.StreamLimit({
+            streamId: MainnetKeeperContracts.DEFAULT_FLOW_STREAM_ID, maxApr: DEFAULT_MAX_APR
+        });
 
         vm.startBroadcast();
         validator = new FlowValidator(
-            MainnetKeeperContracts.SABLIER_FLOW, MainnetKeeperContracts.YNRWAX, TOKEN_DECIMALS, limits, admin
+            MainnetKeeperContracts.SABLIER_FLOW,
+            MainnetKeeperContracts.YNRWAX,
+            TOKEN_DECIMALS,
+            limits,
+            new MainnetStrategyActors().ADMIN()
         );
         vm.stopBroadcast();
 
         console2.log("validator", address(validator));
-    }
-
-    function _promptAddressWithDefault(string memory label, address defaultValue) internal returns (address) {
-        string memory input = Prompt.forString(string.concat(label, " (blank = default)"));
-        if (bytes(input).length == 0) return defaultValue;
-        return vm.parseAddress(input);
-    }
-
-    function _promptUintWithDefault(string memory label, uint256 defaultValue) internal returns (uint256) {
-        string memory input = Prompt.forString(string.concat(label, " (blank = default)"));
-        if (bytes(input).length == 0) return defaultValue;
-        return vm.parseUint(input);
     }
 }

@@ -16,7 +16,6 @@ import {ISafeGuard} from "@src/interfaces/ISafeGuard.sol";
 import {ISablierFlow} from "@src/interfaces/sablier/ISablierFlow.sol";
 import {MainnetKeeperContracts} from "@script/Contracts.sol";
 import {MainnetStrategyActors} from "@script/Actors.sol";
-import {Prompt} from "@script/utils/Prompt.sol";
 
 /// @notice Verifies the final Flow production setup end to end.
 contract VerifyFlowSetup is Script {
@@ -37,40 +36,43 @@ contract VerifyFlowSetup is Script {
     uint256 internal constant DEFAULT_MIN_PROCESSING_PERCENT = 0.01e18;
     uint256 internal constant DEFAULT_MAX_PROCESSING_PERCENT = 0.01e18;
     uint256 internal constant DEFAULT_FEE_FRACTION = 10;
+    error MissingFlowHandlerProxy();
+    error MissingFlowKeeper();
+    error MissingFlowValidator();
 
     function run() external view {
         console2.log("=== Verify Flow Setup ===");
 
-        address flowHandlerProxy = Prompt.forAddress("FlowHandler proxy");
-        address flowKeeper = Prompt.forAddress("FlowStrategyKeeper");
-        address flowValidator = Prompt.forAddress("FlowValidator");
+        address flowHandlerProxy = vm.envOr("FLOW_HANDLER_PROXY", address(0));
+        address flowKeeper = vm.envOr("FLOW_KEEPER", address(0));
+        address flowValidator = vm.envOr("FLOW_VALIDATOR", address(0));
+        if (flowHandlerProxy == address(0)) revert MissingFlowHandlerProxy();
+        if (flowKeeper == address(0)) revert MissingFlowKeeper();
+        if (flowValidator == address(0)) revert MissingFlowValidator();
 
-        address flowHandlerAdmin = _promptAddressWithDefault("FlowHandler admin", new MainnetStrategyActors().ADMIN());
-        address proxyAdmin = _promptAddressWithDefault("FlowHandler proxy admin", new MainnetStrategyActors().ADMIN());
-        address keeperAdmin = _promptAddressWithDefault("Keeper admin", new MainnetStrategyActors().ADMIN());
-        address keeperConfigManager =
-            _promptAddressWithDefault("Keeper config manager", new MainnetStrategyActors().ADMIN());
-        address keeperPauser = _promptAddressWithDefault("Keeper pauser", new MainnetStrategyActors().PAUSER());
-        address keeperPowerKeeper =
-            _promptAddressWithDefault("Keeper power keeper", new MainnetStrategyActors().PROCESSOR());
-        address disburseOperator = _promptAddressWithDefault("FlowHandler disburse operator", flowKeeper);
-        address decreaseOperator = _promptAddressWithDefault("FlowHandler decrease operator (blank = skip)", address(0));
-        address keeperAutomation =
-            _promptAddressWithDefault("Keeper automation / KEEPER_ROLE (blank = skip)", address(0));
+        address flowHandlerAdmin = new MainnetStrategyActors().ADMIN();
+        address proxyAdmin = new MainnetStrategyActors().ADMIN();
+        address keeperAdmin = new MainnetStrategyActors().ADMIN();
+        address keeperConfigManager = new MainnetStrategyActors().ADMIN();
+        address keeperPauser = new MainnetStrategyActors().PAUSER();
+        address keeperPowerKeeper = new MainnetStrategyActors().PROCESSOR();
+        address disburseOperator = flowKeeper;
+        address decreaseOperator = vm.envOr("FLOW_DECREASE_OPERATOR", address(0));
+        address keeperAutomation = vm.envOr("FLOW_KEEPER_AUTOMATION", address(0));
 
-        address safe = _promptAddressWithDefault("Strategy Safe", new MainnetStrategyActors().SAFE());
-        address safeGuard = _promptAddressWithDefault("SafeGuard", DEFAULT_SAFE_GUARD);
-        uint256 streamId = _promptUintWithDefault("Stream ID", MainnetKeeperContracts.DEFAULT_FLOW_STREAM_ID);
-        uint256 maxApr = _promptUintWithDefault("Max APR (1e18 = 100%)", DEFAULT_MAX_APR);
-        uint256 apr = _promptUintWithDefault("APR (1e18 = 100%)", DEFAULT_APR);
-        uint256 holdingPeriod = _promptUintWithDefault("Holding period (seconds)", DEFAULT_HOLDING_PERIOD);
-        uint128 maxRateDelta = uint128(_promptUintWithDefault("Max rate delta", 0));
-        uint128 maxRate = uint128(_promptUintWithDefault("Max rate", 0));
-        uint256 minThreshold = _promptUintWithDefault("minThreshold", DEFAULT_MIN_THRESHOLD);
-        uint256 minResidual = _promptUintWithDefault("minResidual", DEFAULT_MIN_RESIDUAL);
-        uint256 minProcessingPercent = _promptUintWithDefault("minProcessingPercent", DEFAULT_MIN_PROCESSING_PERCENT);
-        uint256 maxProcessingPercent = _promptUintWithDefault("maxProcessingPercent", DEFAULT_MAX_PROCESSING_PERCENT);
-        uint256 feeFraction = _promptUintWithDefault("Fee fraction", DEFAULT_FEE_FRACTION);
+        address safe = new MainnetStrategyActors().SAFE();
+        address safeGuard = DEFAULT_SAFE_GUARD;
+        uint256 streamId = MainnetKeeperContracts.DEFAULT_FLOW_STREAM_ID;
+        uint256 maxApr = DEFAULT_MAX_APR;
+        uint256 apr = DEFAULT_APR;
+        uint256 holdingPeriod = DEFAULT_HOLDING_PERIOD;
+        uint128 maxRateDelta = 0;
+        uint128 maxRate = 0;
+        uint256 minThreshold = DEFAULT_MIN_THRESHOLD;
+        uint256 minResidual = DEFAULT_MIN_RESIDUAL;
+        uint256 minProcessingPercent = DEFAULT_MIN_PROCESSING_PERCENT;
+        uint256 maxProcessingPercent = DEFAULT_MAX_PROCESSING_PERCENT;
+        uint256 feeFraction = DEFAULT_FEE_FRACTION;
 
         _verifyFlowHandlerProxy(flowHandlerProxy, proxyAdmin);
         _verifyFlowHandler(
@@ -327,17 +329,5 @@ contract VerifyFlowSetup is Script {
 
     function _require(bool condition, string memory message) internal pure {
         if (!condition) revert(message);
-    }
-
-    function _promptAddressWithDefault(string memory label, address defaultValue) internal view returns (address) {
-        string memory input = Prompt.forString(string.concat(label, " (blank = default)"));
-        if (bytes(input).length == 0) return defaultValue;
-        return vm.parseAddress(input);
-    }
-
-    function _promptUintWithDefault(string memory label, uint256 defaultValue) internal view returns (uint256) {
-        string memory input = Prompt.forString(string.concat(label, " (blank = default)"));
-        if (bytes(input).length == 0) return defaultValue;
-        return vm.parseUint(input);
     }
 }
