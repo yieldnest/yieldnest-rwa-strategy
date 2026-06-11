@@ -153,6 +153,7 @@ contract FlowStrategyKeeperIntegrationTest is BaseIntegrationTest {
 
         vm.startPrank(admin);
         IProcessorVault(vault).grantRole(IProcessorVault(vault).PROCESSOR_ROLE(), address(keeper));
+        keeper.grantRole(keeper.KEEPER_ROLE(), keeperBot);
         keeper.grantRole(keeper.POWER_KEEPER_ROLE(), powerKeeperBot);
         keeper.revokeRole(keeper.POWER_KEEPER_ROLE(), keeperBot);
         keeper.grantRole(keeper.DEFAULT_ADMIN_ROLE(), admin);

@@ -96,7 +96,8 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
     /// @param _configManager Address that receives CONFIG_MANAGER_ROLE
     /// @param _initializer Address that can call initialize() once to set the config
     /// @param _pauser Address that receives PAUSER_ROLE (e.g. YnDev or emergency operator)
-    /// @param _processor Address that receives KEEPER_ROLE and POWER_KEEPER_ROLE
+    /// @param _processor Address that receives POWER_KEEPER_ROLE. KEEPER_ROLE (automated processing)
+    ///        is intentionally not granted here — grant it explicitly when automation is enabled.
     constructor(address _admin, address _configManager, address _initializer, address _pauser, address _processor) {
         if (_admin == address(0)) revert ZeroAddress();
         if (_configManager == address(0)) revert ZeroAddress();
@@ -111,7 +112,6 @@ contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, Ree
 
         _grantRole(PAUSER_ROLE, _pauser);
 
-        _grantRole(KEEPER_ROLE, _processor);
         _grantRole(POWER_KEEPER_ROLE, _processor);
     }
 

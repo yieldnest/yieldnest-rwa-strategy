@@ -335,9 +335,10 @@ contract FlowHandler is BaseSafeModule {
         return _getFlowHandlerStorage().feeFraction;
     }
 
+    // keccak256(abi.encode(uint256(keccak256("yieldnest.storage.flow_handler")) - 1)) & ~bytes32(uint256(0xff))
     function _getFlowHandlerStorage() internal pure returns (FlowHandlerStorage storage $) {
         assembly {
-            $.slot := 0x896881cf334f778fa94c6a17861664c516faa92b454f0a85365fe8bc17a4fc7b
+            $.slot := 0xb6830dd13663cdc7bf8f7f659d44b81ce20de8bde96c5606b2edc62357a62700
         }
     }
 }

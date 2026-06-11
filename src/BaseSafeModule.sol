@@ -68,9 +68,10 @@ abstract contract BaseSafeModule is Initializable, AccessControlEnumerableUpgrad
     }
 
     /// @notice Return the storage pointer for the shared Safe module namespace.
+    // keccak256(abi.encode(uint256(keccak256("yieldnest.storage.base_safe_module")) - 1)) & ~bytes32(uint256(0xff))
     function _getBaseSafeModuleStorage() internal pure returns (BaseSafeModuleStorage storage $) {
         assembly {
-            $.slot := 0x7d86c2f2eb2cb4c0d5f54168f6e699c3b5eaf3d0b60cf66d968ee01a2d332f90
+            $.slot := 0x2da7a9e4b8d840db8c885d02cce52e7001c738f8bdb6785a6036bf15bc033b00
         }
     }
 }
