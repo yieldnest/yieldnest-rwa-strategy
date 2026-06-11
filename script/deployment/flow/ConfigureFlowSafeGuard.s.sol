@@ -45,9 +45,11 @@ contract ConfigureFlowSafeGuard is Script {
         selectors[3] = IERC20.transfer.selector;
         rules[3] = _transferRule(MainnetKeeperContracts.BORROWER, MainnetKeeperContracts.FEE_WALLET);
 
-        vm.startBroadcast();
-        ISafeGuard(guardAddress).setProcessorRules(targets, selectors, rules);
-        vm.stopBroadcast();
+        bytes memory callData = abi.encodeCall(ISafeGuard.setProcessorRules, (targets, selectors, rules));
+
+        console2.log("Submit this call manually:");
+        console2.log("target", guardAddress);
+        console2.logBytes(callData);
     }
 
     function _approveRule(address spender) internal pure returns (IVault.FunctionRule memory rule) {
