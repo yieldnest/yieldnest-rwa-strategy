@@ -3,13 +3,17 @@ pragma solidity ^0.8.28;
 
 import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
+import {stdJson} from "forge-std/StdJson.sol";
 
 import {FlowStrategyKeeper, IFlowStrategyKeeper} from "@src/FlowStrategyKeeper.sol";
 import {MainnetKeeperContracts} from "@script/Contracts.sol";
 import {MainnetStrategyActors} from "@script/Actors.sol";
+import {FlowDeploymentFiles} from "@script/deployment/flow/FlowDeploymentFiles.sol";
 
 /// @notice Deploy and initialize FlowStrategyKeeper.
-contract DeployFlowKeeper is Script {
+contract DeployFlowKeeper is FlowDeploymentFiles {
+    using stdJson for string;
+
     uint256 internal constant DEFAULT_MIN_THRESHOLD = 200_000e6;
     uint256 internal constant DEFAULT_MIN_RESIDUAL = 1_000e6;
     uint256 internal constant DEFAULT_MIN_PROCESSING_PERCENT = 0.01e18;
@@ -50,5 +54,26 @@ contract DeployFlowKeeper is Script {
         vm.stopBroadcast();
 
         console2.log("keeper", address(keeper));
+
+        string memory objectKey = "flowKeeperDeployment";
+        vm.serializeUint(objectKey, "chainId", block.chainid);
+        vm.serializeUint(objectKey, "deploymentTimestamp", block.timestamp);
+        vm.serializeAddress(objectKey, "admin", new MainnetStrategyActors().ADMIN());
+        vm.serializeAddress(objectKey, "configManager", new MainnetStrategyActors().ADMIN());
+        vm.serializeAddress(objectKey, "initializer", vm.addr(vm.envUint("PRIVATE_KEY")));
+        vm.serializeAddress(objectKey, "pauser", new MainnetStrategyActors().PAUSER());
+        vm.serializeAddress(objectKey, "processor", new MainnetStrategyActors().PROCESSOR());
+        vm.serializeAddress(objectKey, "vault", MainnetKeeperContracts.YNRWAX);
+        vm.serializeAddress(objectKey, "targetStrategy", MainnetKeeperContracts.FLEX_STRATEGY);
+        vm.serializeAddress(objectKey, "safe", new MainnetStrategyActors().SAFE());
+        vm.serializeAddress(objectKey, "baseAsset", MainnetKeeperContracts.USDC);
+        vm.serializeAddress(objectKey, "flowHandler", flowHandler);
+        vm.serializeUint(objectKey, "minThreshold", DEFAULT_MIN_THRESHOLD);
+        vm.serializeUint(objectKey, "minResidual", DEFAULT_MIN_RESIDUAL);
+        vm.serializeUint(objectKey, "minProcessingPercent", DEFAULT_MIN_PROCESSING_PERCENT);
+        vm.serializeUint(objectKey, "maxProcessingPercent", DEFAULT_MAX_PROCESSING_PERCENT);
+        string memory json = vm.serializeAddress(objectKey, "keeper", address(keeper));
+        vm.writeJson(json, KEEPER_PATH);
+        console2.log("deploymentFile", KEEPER_PATH);
     }
 }

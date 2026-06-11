@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
+import {stdJson} from "forge-std/StdJson.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 import {IAccessControl} from "lib/openzeppelin-contracts/contracts/access/IAccessControl.sol";
@@ -16,9 +17,12 @@ import {ISafeGuard} from "@src/interfaces/ISafeGuard.sol";
 import {ISablierFlow} from "@src/interfaces/sablier/ISablierFlow.sol";
 import {MainnetKeeperContracts} from "@script/Contracts.sol";
 import {MainnetStrategyActors} from "@script/Actors.sol";
+import {FlowDeploymentFiles} from "@script/deployment/flow/FlowDeploymentFiles.sol";
 
 /// @notice Verifies the final Flow production setup end to end.
-contract VerifyFlowSetup is Script {
+contract VerifyFlowSetup is FlowDeploymentFiles {
+    using stdJson for string;
+
     bytes32 internal constant DEFAULT_ADMIN_ROLE = 0x00;
     bytes32 internal constant EIP1967_IMPLEMENTATION_SLOT =
         0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
@@ -36,19 +40,18 @@ contract VerifyFlowSetup is Script {
     uint256 internal constant DEFAULT_MIN_PROCESSING_PERCENT = 0.01e18;
     uint256 internal constant DEFAULT_MAX_PROCESSING_PERCENT = 0.01e18;
     uint256 internal constant DEFAULT_FEE_FRACTION = 10;
-    error MissingFlowHandlerProxy();
-    error MissingFlowKeeper();
-    error MissingFlowValidator();
+    error MissingDeploymentFile(string path);
 
     function run() external view {
         console2.log("=== Verify Flow Setup ===");
 
-        address flowHandlerProxy = vm.envOr("FLOW_HANDLER_PROXY", address(0));
-        address flowKeeper = vm.envOr("FLOW_KEEPER", address(0));
-        address flowValidator = vm.envOr("FLOW_VALIDATOR", address(0));
-        if (flowHandlerProxy == address(0)) revert MissingFlowHandlerProxy();
-        if (flowKeeper == address(0)) revert MissingFlowKeeper();
-        if (flowValidator == address(0)) revert MissingFlowValidator();
+        string memory validatorJson = _readRequiredJson(VALIDATOR_PATH);
+        string memory handlerJson = _readRequiredJson(HANDLER_PATH);
+        string memory keeperJson = _readRequiredJson(KEEPER_PATH);
+
+        address flowHandlerProxy = handlerJson.readAddress(".proxy");
+        address flowKeeper = keeperJson.readAddress(".keeper");
+        address flowValidator = validatorJson.readAddress(".validator");
 
         address flowHandlerAdmin = new MainnetStrategyActors().ADMIN();
         address proxyAdmin = new MainnetStrategyActors().ADMIN();
@@ -329,5 +332,10 @@ contract VerifyFlowSetup is Script {
 
     function _require(bool condition, string memory message) internal pure {
         if (!condition) revert(message);
+    }
+
+    function _readRequiredJson(string memory path) internal view returns (string memory) {
+        if (!vm.exists(path)) revert MissingDeploymentFile(path);
+        return vm.readFile(path);
     }
 }

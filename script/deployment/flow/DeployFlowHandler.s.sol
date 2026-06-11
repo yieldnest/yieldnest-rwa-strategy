@@ -3,14 +3,18 @@ pragma solidity ^0.8.28;
 
 import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
+import {stdJson} from "forge-std/StdJson.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 import {FlowHandler} from "@src/FlowHandler.sol";
 import {MainnetKeeperContracts} from "@script/Contracts.sol";
 import {MainnetStrategyActors} from "@script/Actors.sol";
+import {FlowDeploymentFiles} from "@script/deployment/flow/FlowDeploymentFiles.sol";
 
 /// @notice Deploy FlowHandler implementation + proxy and initialize it for a target stream.
-contract DeployFlowHandler is Script {
+contract DeployFlowHandler is FlowDeploymentFiles {
+    using stdJson for string;
+
     uint256 internal constant DEFAULT_APR = 0.11e18;
     uint256 internal constant DEFAULT_HOLDING_PERIOD = 28 days;
     uint256 internal constant DEFAULT_FEE_FRACTION = 10;
@@ -57,5 +61,28 @@ contract DeployFlowHandler is Script {
 
         console2.log("implementation", address(implementation));
         console2.log("proxy", address(proxy));
+
+        string memory objectKey = "flowHandlerDeployment";
+        vm.serializeUint(objectKey, "chainId", block.chainid);
+        vm.serializeUint(objectKey, "deploymentTimestamp", block.timestamp);
+        vm.serializeAddress(objectKey, "admin", new MainnetStrategyActors().ADMIN());
+        vm.serializeAddress(objectKey, "proxyAdmin", new MainnetStrategyActors().ADMIN());
+        vm.serializeAddress(objectKey, "safe", new MainnetStrategyActors().SAFE());
+        vm.serializeAddress(objectKey, "safeGuard", 0x81e3E4224D9a2d66D9edbA6d4781d475AA65F01e);
+        vm.serializeAddress(objectKey, "flow", MainnetKeeperContracts.SABLIER_FLOW);
+        vm.serializeUint(objectKey, "streamId", MainnetKeeperContracts.DEFAULT_FLOW_STREAM_ID);
+        vm.serializeAddress(objectKey, "token", MainnetKeeperContracts.USDC);
+        vm.serializeAddress(objectKey, "streamRecipient", MainnetKeeperContracts.REWARDS_SWEEPER);
+        vm.serializeUint(objectKey, "apr", DEFAULT_APR);
+        vm.serializeUint(objectKey, "holdingPeriod", DEFAULT_HOLDING_PERIOD);
+        vm.serializeUint(objectKey, "maxRateDelta", 0);
+        vm.serializeUint(objectKey, "maxRate", 0);
+        vm.serializeAddress(objectKey, "borrower", MainnetKeeperContracts.BORROWER);
+        vm.serializeAddress(objectKey, "feeWallet", MainnetKeeperContracts.FEE_WALLET);
+        vm.serializeUint(objectKey, "feeFraction", DEFAULT_FEE_FRACTION);
+        vm.serializeAddress(objectKey, "implementation", address(implementation));
+        string memory json = vm.serializeAddress(objectKey, "proxy", address(proxy));
+        vm.writeJson(json, HANDLER_PATH);
+        console2.log("deploymentFile", HANDLER_PATH);
     }
 }

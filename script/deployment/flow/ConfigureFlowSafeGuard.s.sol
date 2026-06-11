@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
+import {stdJson} from "forge-std/StdJson.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IValidator} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/src/interface/IValidator.sol";
 import {IVault} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/src/interface/IVault.sol";
@@ -11,9 +12,12 @@ import {ISafeGuard} from "@src/interfaces/ISafeGuard.sol";
 import {ISablierFlow} from "@src/interfaces/sablier/ISablierFlow.sol";
 import {MainnetKeeperContracts} from "@script/Contracts.sol";
 import {MainnetStrategyActors} from "@script/Actors.sol";
+import {FlowDeploymentFiles} from "@script/deployment/flow/FlowDeploymentFiles.sol";
 
 /// @notice Configure the SafeGuard processor rules required by FlowHandler.
-contract ConfigureFlowSafeGuard is Script {
+contract ConfigureFlowSafeGuard is FlowDeploymentFiles {
+    using stdJson for string;
+
     error MissingFlowValidator();
 
     function run() external {
@@ -52,6 +56,17 @@ contract ConfigureFlowSafeGuard is Script {
         console2.log("Submit this call manually:");
         console2.log("target", guardAddress);
         console2.logBytes(callData);
+
+        string memory objectKey = "flowSafeGuardConfig";
+        vm.serializeUint(objectKey, "chainId", block.chainid);
+        vm.serializeUint(objectKey, "generatedTimestamp", block.timestamp);
+        vm.serializeAddress(objectKey, "guard", guardAddress);
+        vm.serializeAddress(objectKey, "safe", safe);
+        vm.serializeAddress(objectKey, "validator", validator);
+        vm.serializeAddress(objectKey, "flow", MainnetKeeperContracts.SABLIER_FLOW);
+        string memory json = vm.serializeBytes(objectKey, "calldata", callData);
+        vm.writeJson(json, SAFEGUARD_PATH);
+        console2.log("deploymentFile", SAFEGUARD_PATH);
     }
 
     function _approveRule(address spender) internal pure returns (IVault.FunctionRule memory rule) {
