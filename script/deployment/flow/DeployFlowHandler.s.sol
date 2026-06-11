@@ -24,10 +24,11 @@ contract DeployFlowHandler is Script {
         console2.log("safe", new MainnetStrategyActors().SAFE());
         console2.log("safeGuard", 0x81e3E4224D9a2d66D9edbA6d4781d475AA65F01e);
         console2.log("flow", MainnetKeeperContracts.SABLIER_FLOW);
+        console2.log("default streamId", MainnetKeeperContracts.DEFAULT_FLOW_STREAM_ID);
         console2.log("token", MainnetKeeperContracts.USDC);
         console2.log("recipient", MainnetKeeperContracts.REWARDS_SWEEPER);
 
-        uint256 streamId = Prompt.forUint("Stream ID");
+        uint256 streamId = _promptUintWithDefault("Stream ID", MainnetKeeperContracts.DEFAULT_FLOW_STREAM_ID);
         address admin = _promptAddressWithDefault("FlowHandler admin", new MainnetStrategyActors().ADMIN());
         address proxyAdmin = _promptAddressWithDefault("Proxy admin", new MainnetStrategyActors().ADMIN());
         uint256 apr = _promptUintWithDefault("APR (1e18 = 100%)", DEFAULT_APR);

@@ -17,10 +17,11 @@ contract DeployFlowValidator is Script {
         console2.log("=== Deploy FlowValidator ===");
         console2.log("flow", MainnetKeeperContracts.SABLIER_FLOW);
         console2.log("vault", MainnetKeeperContracts.YNRWAX);
+        console2.log("default streamId", MainnetKeeperContracts.DEFAULT_FLOW_STREAM_ID);
         console2.log("default admin", new MainnetStrategyActors().ADMIN());
         console2.log("default maxApr", DEFAULT_MAX_APR);
 
-        uint256 streamId = Prompt.forUint("Stream ID");
+        uint256 streamId = _promptUintWithDefault("Stream ID", MainnetKeeperContracts.DEFAULT_FLOW_STREAM_ID);
         uint256 maxApr = _promptUintWithDefault("Max APR (1e18 = 100%)", DEFAULT_MAX_APR);
         address admin = _promptAddressWithDefault("Admin", new MainnetStrategyActors().ADMIN());
 

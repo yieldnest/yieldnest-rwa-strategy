@@ -43,6 +43,9 @@ library MainnetKeeperContracts {
     /// @notice Sablier Flow contract for continuous streaming payments
     address public constant SABLIER_FLOW = 0x844344Cd871B28221d725ecE9630E8bDE4E3a181;
 
+    /// @notice Default production Sablier Flow stream id for ynRWAx
+    uint256 public constant DEFAULT_FLOW_STREAM_ID = 11;
+
     // ═══════════════════════════════════════════════════════════════════════════
     // GNOSIS SAFE INFRASTRUCTURE
     // ═══════════════════════════════════════════════════════════════════════════
