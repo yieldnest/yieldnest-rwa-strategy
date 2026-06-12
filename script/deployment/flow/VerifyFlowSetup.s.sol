@@ -23,6 +23,37 @@ import {FlowDeploymentFiles} from "@script/deployment/flow/FlowDeploymentFiles.s
 contract VerifyFlowSetup is FlowDeploymentFiles {
     using stdJson for string;
 
+    struct DeployedAddresses {
+        address flowHandlerProxy;
+        address flowKeeper;
+        address flowValidator;
+    }
+
+    struct ExpectedConfig {
+        address flowHandlerAdmin;
+        address proxyAdmin;
+        address keeperAdmin;
+        address keeperConfigManager;
+        address keeperPauser;
+        address keeperPowerKeeper;
+        address disburseOperator;
+        address decreaseOperator;
+        address keeperAutomation;
+        address safe;
+        address safeGuard;
+        uint256 streamId;
+        uint256 maxApr;
+        uint256 apr;
+        uint256 holdingPeriod;
+        uint128 maxRateDelta;
+        uint128 maxRate;
+        uint256 minThreshold;
+        uint256 minResidual;
+        uint256 minProcessingPercent;
+        uint256 maxProcessingPercent;
+        uint256 feeFraction;
+    }
+
     bytes32 internal constant DEFAULT_ADMIN_ROLE = 0x00;
     bytes32 internal constant EIP1967_IMPLEMENTATION_SLOT =
         0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
@@ -45,73 +76,81 @@ contract VerifyFlowSetup is FlowDeploymentFiles {
     function run() external {
         console2.log("=== Verify Flow Setup ===");
 
+        DeployedAddresses memory deployed = _loadDeployedAddresses();
+        ExpectedConfig memory expected = _expectedConfig(deployed.flowKeeper);
+
+        _verifyFlowHandlerProxy(deployed.flowHandlerProxy, expected.proxyAdmin);
+        _verifyFlowHandler(
+            deployed.flowHandlerProxy,
+            deployed.flowValidator,
+            expected.safe,
+            expected.safeGuard,
+            expected.streamId,
+            expected.apr,
+            expected.holdingPeriod,
+            expected.maxRateDelta,
+            expected.maxRate,
+            expected.feeFraction,
+            expected.flowHandlerAdmin,
+            expected.disburseOperator,
+            expected.decreaseOperator
+        );
+        _verifyFlowKeeper(
+            deployed.flowKeeper,
+            deployed.flowHandlerProxy,
+            expected.safe,
+            expected.keeperAdmin,
+            expected.keeperConfigManager,
+            expected.keeperPauser,
+            expected.keeperPowerKeeper,
+            expected.keeperAutomation,
+            expected.minThreshold,
+            expected.minResidual,
+            expected.minProcessingPercent,
+            expected.maxProcessingPercent
+        );
+        _verifySafe(deployed.flowHandlerProxy, expected.safe, expected.safeGuard);
+        _verifyValidator(deployed.flowValidator, expected.streamId, expected.maxApr, expected.flowHandlerAdmin);
+        _verifySafeGuardRules(expected.safeGuard, deployed.flowValidator, expected.safe);
+
+        console2.log("Flow setup verification passed.");
+    }
+
+    function _loadDeployedAddresses() internal view returns (DeployedAddresses memory deployed) {
         string memory validatorJson = _readRequiredJson(VALIDATOR_PATH);
         string memory handlerJson = _readRequiredJson(HANDLER_PATH);
         string memory keeperJson = _readRequiredJson(KEEPER_PATH);
 
-        address flowHandlerProxy = handlerJson.readAddress(".proxy");
-        address flowKeeper = keeperJson.readAddress(".keeper");
-        address flowValidator = validatorJson.readAddress(".validator");
+        deployed.flowHandlerProxy = handlerJson.readAddress(".proxy");
+        deployed.flowKeeper = keeperJson.readAddress(".keeper");
+        deployed.flowValidator = validatorJson.readAddress(".validator");
+    }
 
-        address flowHandlerAdmin = new MainnetStrategyActors().ADMIN();
-        address proxyAdmin = new MainnetStrategyActors().ADMIN();
-        address keeperAdmin = new MainnetStrategyActors().ADMIN();
-        address keeperConfigManager = new MainnetStrategyActors().ADMIN();
-        address keeperPauser = new MainnetStrategyActors().PAUSER();
-        address keeperPowerKeeper = new MainnetStrategyActors().PROCESSOR();
-        address disburseOperator = flowKeeper;
-        address decreaseOperator = vm.envOr("FLOW_DECREASE_OPERATOR", address(0));
-        address keeperAutomation = vm.envOr("FLOW_KEEPER_AUTOMATION", address(0));
+    function _expectedConfig(address flowKeeper) internal returns (ExpectedConfig memory expected) {
+        MainnetStrategyActors actors = new MainnetStrategyActors();
 
-        address safe = new MainnetStrategyActors().SAFE();
-        address safeGuard = DEFAULT_SAFE_GUARD;
-        uint256 streamId = MainnetKeeperContracts.DEFAULT_FLOW_STREAM_ID;
-        uint256 maxApr = DEFAULT_MAX_APR;
-        uint256 apr = DEFAULT_APR;
-        uint256 holdingPeriod = DEFAULT_HOLDING_PERIOD;
-        uint128 maxRateDelta = 0;
-        uint128 maxRate = 0;
-        uint256 minThreshold = DEFAULT_MIN_THRESHOLD;
-        uint256 minResidual = DEFAULT_MIN_RESIDUAL;
-        uint256 minProcessingPercent = DEFAULT_MIN_PROCESSING_PERCENT;
-        uint256 maxProcessingPercent = DEFAULT_MAX_PROCESSING_PERCENT;
-        uint256 feeFraction = DEFAULT_FEE_FRACTION;
-
-        _verifyFlowHandlerProxy(flowHandlerProxy, proxyAdmin);
-        _verifyFlowHandler(
-            flowHandlerProxy,
-            flowValidator,
-            safe,
-            safeGuard,
-            streamId,
-            apr,
-            holdingPeriod,
-            maxRateDelta,
-            maxRate,
-            feeFraction,
-            flowHandlerAdmin,
-            disburseOperator,
-            decreaseOperator
-        );
-        _verifyFlowKeeper(
-            flowKeeper,
-            flowHandlerProxy,
-            safe,
-            keeperAdmin,
-            keeperConfigManager,
-            keeperPauser,
-            keeperPowerKeeper,
-            keeperAutomation,
-            minThreshold,
-            minResidual,
-            minProcessingPercent,
-            maxProcessingPercent
-        );
-        _verifySafe(flowHandlerProxy, safe, safeGuard);
-        _verifyValidator(flowValidator, streamId, maxApr, flowHandlerAdmin);
-        _verifySafeGuardRules(safeGuard, flowValidator, safe);
-
-        console2.log("Flow setup verification passed.");
+        expected.flowHandlerAdmin = actors.ADMIN();
+        expected.proxyAdmin = actors.ADMIN();
+        expected.keeperAdmin = actors.ADMIN();
+        expected.keeperConfigManager = actors.ADMIN();
+        expected.keeperPauser = actors.PAUSER();
+        expected.keeperPowerKeeper = actors.PROCESSOR();
+        expected.disburseOperator = flowKeeper;
+        expected.decreaseOperator = vm.envOr("FLOW_DECREASE_OPERATOR", address(0));
+        expected.keeperAutomation = vm.envOr("FLOW_KEEPER_AUTOMATION", address(0));
+        expected.safe = actors.SAFE();
+        expected.safeGuard = DEFAULT_SAFE_GUARD;
+        expected.streamId = MainnetKeeperContracts.DEFAULT_FLOW_STREAM_ID;
+        expected.maxApr = DEFAULT_MAX_APR;
+        expected.apr = DEFAULT_APR;
+        expected.holdingPeriod = DEFAULT_HOLDING_PERIOD;
+        expected.maxRateDelta = 0;
+        expected.maxRate = 0;
+        expected.minThreshold = DEFAULT_MIN_THRESHOLD;
+        expected.minResidual = DEFAULT_MIN_RESIDUAL;
+        expected.minProcessingPercent = DEFAULT_MIN_PROCESSING_PERCENT;
+        expected.maxProcessingPercent = DEFAULT_MAX_PROCESSING_PERCENT;
+        expected.feeFraction = DEFAULT_FEE_FRACTION;
     }
 
     function _verifyFlowHandlerProxy(address proxy, address expectedProxyAdmin) internal view {
