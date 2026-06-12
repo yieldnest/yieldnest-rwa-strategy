@@ -42,7 +42,7 @@ contract VerifyFlowSetup is FlowDeploymentFiles {
     uint256 internal constant DEFAULT_FEE_FRACTION = 10;
     error MissingDeploymentFile(string path);
 
-    function run() external view {
+    function run() external {
         console2.log("=== Verify Flow Setup ===");
 
         string memory validatorJson = _readRequiredJson(VALIDATOR_PATH);
