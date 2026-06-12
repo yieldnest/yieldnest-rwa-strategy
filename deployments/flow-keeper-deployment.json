@@ -1,0 +1,19 @@
+{
+  "admin": "0xfcad670592a3b24869C0b51a6c6FDED4F95D6975",
+  "baseAsset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+  "chainId": 1,
+  "configManager": "0xfcad670592a3b24869C0b51a6c6FDED4F95D6975",
+  "deploymentTimestamp": 1781223911,
+  "flowHandler": "0x8302d2924e3F2d519cA75b9a95fDa0395AEbd2f8",
+  "initializer": "0x67a114e733b52CAC50A168F02b5626f500801C62",
+  "keeper": "0x04C00d974cdFA60F16C9615B8C45A85EC680ef76",
+  "maxProcessingPercent": 10000000000000000,
+  "minProcessingPercent": 10000000000000000,
+  "minResidual": 1000000000,
+  "minThreshold": 200000000000,
+  "pauser": "0xa08F39d30dc865CC11a49b6e5cBd27630D6141C3",
+  "processor": "0x7e92AbC00F58Eb325C7fC95Ed52ACdf74584Be2c",
+  "safe": "0xb34E69c23Df216334496DFFd455618249E6bbFa9",
+  "targetStrategy": "0xF6e1443e3F70724cec8C0a779C7C35A8DcDA928B",
+  "vault": "0x01Ba69727E2860b37bc1a2bd56999c1aFb4C15D8"
+}
