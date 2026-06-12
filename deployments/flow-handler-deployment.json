@@ -1,0 +1,21 @@
+{
+  "admin": "0xfcad670592a3b24869C0b51a6c6FDED4F95D6975",
+  "apr": 110000000000000000,
+  "borrower": "0xaa7f79Bb105833D655D1C13C175142c44e209912",
+  "chainId": 1,
+  "deploymentTimestamp": 1781222315,
+  "feeFraction": 10,
+  "feeWallet": "0xC92Dd1837EBcb0365eB0a8795f9c8E474f8B6183",
+  "flow": "0x844344Cd871B28221d725ecE9630E8bDE4E3a181",
+  "holdingPeriod": 2419200,
+  "implementation": "0x7195D3fD9Cb2Ac50cD31AA3d56Ef5A43bED086A1",
+  "maxRate": 0,
+  "maxRateDelta": 0,
+  "proxy": "0x8302d2924e3F2d519cA75b9a95fDa0395AEbd2f8",
+  "proxyAdmin": "0xfcad670592a3b24869C0b51a6c6FDED4F95D6975",
+  "safe": "0xb34E69c23Df216334496DFFd455618249E6bbFa9",
+  "safeGuard": "0x81e3E4224D9a2d66D9edbA6d4781d475AA65F01e",
+  "streamId": 11,
+  "streamRecipient": "0xbAC19FD66262629eEA13F1fd36ba9ae654bDfc76",
+  "token": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+}
