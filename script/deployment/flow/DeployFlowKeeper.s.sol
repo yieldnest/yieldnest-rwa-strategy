@@ -43,10 +43,11 @@ contract DeployFlowKeeper is FlowDeploymentFiles {
         });
 
         vm.startBroadcast();
+        (, address initializer,) = vm.readCallers();
         keeper = new FlowStrategyKeeper(
             new MainnetStrategyActors().ADMIN(),
             new MainnetStrategyActors().ADMIN(),
-            vm.addr(vm.envUint("PRIVATE_KEY")),
+            initializer,
             new MainnetStrategyActors().PAUSER(),
             new MainnetStrategyActors().PROCESSOR()
         );
@@ -60,7 +61,7 @@ contract DeployFlowKeeper is FlowDeploymentFiles {
         vm.serializeUint(objectKey, "deploymentTimestamp", block.timestamp);
         vm.serializeAddress(objectKey, "admin", new MainnetStrategyActors().ADMIN());
         vm.serializeAddress(objectKey, "configManager", new MainnetStrategyActors().ADMIN());
-        vm.serializeAddress(objectKey, "initializer", vm.addr(vm.envUint("PRIVATE_KEY")));
+        vm.serializeAddress(objectKey, "initializer", initializer);
         vm.serializeAddress(objectKey, "pauser", new MainnetStrategyActors().PAUSER());
         vm.serializeAddress(objectKey, "processor", new MainnetStrategyActors().PROCESSOR());
         vm.serializeAddress(objectKey, "vault", MainnetKeeperContracts.YNRWAX);
