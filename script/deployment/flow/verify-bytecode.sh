@@ -37,7 +37,7 @@ EIP1967_ADMIN_SLOT="0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b
 normalize_hex() {
   local value="${1:-}"
   value="${value#0x}"
-  printf '%s' "${value,,}"
+  printf '%s' "$value" | tr '[:upper:]' '[:lower:]'
 }
 
 trim_slot_to_address() {
@@ -118,7 +118,7 @@ check_proxy_slots() {
 
   local ok=0
 
-  if [[ "${impl_addr,,}" != "${expected_impl,,}" ]]; then
+  if [[ "$(printf '%s' "$impl_addr" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$expected_impl" | tr '[:upper:]' '[:lower:]')" ]]; then
     echo "FAIL FlowHandler proxy implementation slot mismatch"
     echo "  expected: $expected_impl"
     echo "  actual  : $impl_addr"
@@ -127,7 +127,7 @@ check_proxy_slots() {
     echo "OK   FlowHandler proxy implementation slot: $impl_addr"
   fi
 
-  if [[ "${admin_addr,,}" != "${expected_admin,,}" ]]; then
+  if [[ "$(printf '%s' "$admin_addr" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$expected_admin" | tr '[:upper:]' '[:lower:]')" ]]; then
     echo "FAIL FlowHandler proxy admin slot mismatch"
     echo "  expected: $expected_admin"
     echo "  actual  : $admin_addr"
