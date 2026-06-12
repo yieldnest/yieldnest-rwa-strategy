@@ -18,6 +18,8 @@ contract DeployFlowHandler is FlowDeploymentFiles {
     uint256 internal constant DEFAULT_APR = 0.11e18;
     uint256 internal constant DEFAULT_HOLDING_PERIOD = 28 days;
     uint256 internal constant DEFAULT_FEE_FRACTION = 10;
+    bytes32 internal constant EIP1967_ADMIN_SLOT =
+        0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
 
     function run()
         external
@@ -58,15 +60,18 @@ contract DeployFlowHandler is FlowDeploymentFiles {
         vm.stopBroadcast();
 
         handler = FlowHandler(address(proxy));
+        address proxyAdminContract = address(uint160(uint256(vm.load(address(proxy), EIP1967_ADMIN_SLOT))));
 
         console2.log("implementation", address(implementation));
         console2.log("proxy", address(proxy));
+        console2.log("proxyAdminContract", proxyAdminContract);
 
         string memory objectKey = "flowHandlerDeployment";
         vm.serializeUint(objectKey, "chainId", block.chainid);
         vm.serializeUint(objectKey, "deploymentTimestamp", block.timestamp);
         vm.serializeAddress(objectKey, "admin", new MainnetStrategyActors().ADMIN());
-        vm.serializeAddress(objectKey, "proxyAdmin", new MainnetStrategyActors().ADMIN());
+        vm.serializeAddress(objectKey, "proxyAdminOwner", new MainnetStrategyActors().ADMIN());
+        vm.serializeAddress(objectKey, "proxyAdmin", proxyAdminContract);
         vm.serializeAddress(objectKey, "safe", new MainnetStrategyActors().SAFE());
         vm.serializeAddress(objectKey, "safeGuard", 0x81e3E4224D9a2d66D9edbA6d4781d475AA65F01e);
         vm.serializeAddress(objectKey, "flow", MainnetKeeperContracts.SABLIER_FLOW);
