@@ -10,9 +10,10 @@ Assumptions:
 Clone the repo and check out this branch before running the scripts:
 
 ```bash
-git clone <repo-url>
+git clone git@github.com:yieldnest/yieldnest-rwa-strategy.git
 cd yieldnest-rwa-strategy
 git checkout feature/sablier-flow-stream
+forge build
 ```
 
 Deployed addresses:
