@@ -18,8 +18,7 @@ contract DeployFlowHandler is FlowDeploymentFiles {
     uint256 internal constant DEFAULT_APR = 0.11e18;
     uint256 internal constant DEFAULT_HOLDING_PERIOD = 28 days;
     uint256 internal constant DEFAULT_FEE_FRACTION = 10;
-    bytes32 internal constant EIP1967_ADMIN_SLOT =
-        0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
+    bytes32 internal constant EIP1967_ADMIN_SLOT = 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
 
     function run()
         external
