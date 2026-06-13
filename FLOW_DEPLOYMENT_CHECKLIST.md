@@ -15,6 +15,23 @@ Deployed addresses:
 - FlowHandler implementation: `0x7195D3fD9Cb2Ac50cD31AA3d56Ef5A43bED086A1`
 - FlowStrategyKeeper: `0x04C00d974cdFA60F16C9615B8C45A85EC680ef76`
 
+## Verification prerequisites
+
+Before running the verifiers, make sure these deployment artifacts exist:
+- `deployments/flow-validator-deployment.json`
+- `deployments/flow-handler-deployment.json`
+- `deployments/flow-keeper-deployment.json`
+
+Run setup verification with:
+```bash
+FLOW_DEPLOYED=true forge script script/deployment/flow/VerifyFlowSetup.s.sol:VerifyFlowSetup --rpc-url $RPC_URL
+```
+
+Run bytecode verification with:
+```bash
+bash script/deployment/flow/verify-bytecode.sh $RPC_URL
+```
+
 ## 1. Enable the module
 
 Submit a Safe transaction from the Strategy Safe itself:
@@ -40,7 +57,7 @@ Submit from the Yn Security Council:
 ## 3. Generate SafeGuard rule calldata
 
 ```bash
-FLOW_VALIDATOR=0x0E013f48d8B0969c749a325E3f1ac3119641167E forge script script/deployment/flow/ConfigureFlowSafeGuard.s.sol:ConfigureFlowSafeGuard --rpc-url https://eth-mainnet.g.alchemy.com/v2/1FX7IZKqADVmU4ew3b7WD6NYNK5Ui0N7
+FLOW_VALIDATOR=0x0E013f48d8B0969c749a325E3f1ac3119641167E forge script script/deployment/flow/ConfigureFlowSafeGuard.s.sol:ConfigureFlowSafeGuard --rpc-url $RPC_URL
 ```
 
 This prints:
