@@ -34,6 +34,7 @@ contract VerifyFlowSetup is FlowDeploymentFiles {
     }
 
     struct ExpectedConfig {
+        bool deployed;
         address flowHandlerAdmin;
         address proxyAdmin;
         address keeperAdmin;
@@ -84,21 +85,7 @@ contract VerifyFlowSetup is FlowDeploymentFiles {
         ExpectedConfig memory expected = _expectedConfig(deployed.flowKeeper);
 
         _verifyFlowHandlerProxy(deployed.flowHandlerProxy, expected.proxyAdmin);
-        _verifyFlowHandler(
-            deployed.flowHandlerProxy,
-            deployed.flowValidator,
-            expected.safe,
-            expected.safeGuard,
-            expected.streamId,
-            expected.apr,
-            expected.holdingPeriod,
-            expected.maxRateDelta,
-            expected.maxRate,
-            expected.feeFraction,
-            expected.flowHandlerAdmin,
-            expected.disburseOperator,
-            expected.decreaseOperator
-        );
+        _verifyFlowHandler(deployed.flowHandlerProxy, deployed.flowValidator, expected);
         _verifyFlowKeeper(
             deployed.flowKeeper,
             deployed.flowHandlerProxy,
@@ -113,9 +100,11 @@ contract VerifyFlowSetup is FlowDeploymentFiles {
             expected.minProcessingPercent,
             expected.maxProcessingPercent
         );
-        _verifySafe(deployed.flowHandlerProxy, expected.safe, expected.safeGuard);
+        _verifySafe(deployed.flowHandlerProxy, expected.deployed, expected.safe, expected.safeGuard);
         _verifyValidator(deployed.flowValidator, expected.streamId, expected.maxApr, expected.flowHandlerAdmin);
-        _verifySafeGuardRules(expected.safeGuard, deployed.flowValidator, expected.safe);
+        if (expected.deployed) {
+            _verifySafeGuardRules(expected.safeGuard, deployed.flowValidator, expected.safe);
+        }
 
         console2.log("Flow setup verification passed.");
     }
@@ -133,6 +122,7 @@ contract VerifyFlowSetup is FlowDeploymentFiles {
     function _expectedConfig(address flowKeeper) internal returns (ExpectedConfig memory expected) {
         MainnetStrategyActors actors = new MainnetStrategyActors();
 
+        expected.deployed = vm.envOr("FLOW_DEPLOYED", false);
         expected.flowHandlerAdmin = actors.ADMIN();
         expected.proxyAdmin = actors.ADMIN();
         expected.keeperAdmin = actors.ADMIN();
@@ -178,61 +168,54 @@ contract VerifyFlowSetup is FlowDeploymentFiles {
         console2.log("flowHandlerProxyAdminOwner", proxyAdminOwner);
     }
 
-    function _verifyFlowHandler(
-        address flowHandlerProxy,
-        address flowValidator,
-        address safe,
-        address safeGuard,
-        uint256 streamId,
-        uint256 apr,
-        uint256 holdingPeriod,
-        uint128 maxRateDelta,
-        uint128 maxRate,
-        uint256 feeFraction,
-        address flowHandlerAdmin,
-        address disburseOperator,
-        address decreaseOperator
-    ) internal view {
+    function _verifyFlowHandler(address flowHandlerProxy, address flowValidator, ExpectedConfig memory expected)
+        internal
+        view
+    {
         console2.log("-- verifying FlowHandler");
 
         FlowHandler handler = FlowHandler(flowHandlerProxy);
         ISablierFlow flow = ISablierFlow(MainnetKeeperContracts.SABLIER_FLOW);
 
-        _require(handler.safe() == safe, "FlowHandler safe mismatch");
-        _require(handler.safeGuard() == safeGuard, "FlowHandler safeGuard mismatch");
+        _require(handler.safe() == expected.safe, "FlowHandler safe mismatch");
+        _require(handler.safeGuard() == expected.safeGuard, "FlowHandler safeGuard mismatch");
         _require(handler.flow() == MainnetKeeperContracts.SABLIER_FLOW, "FlowHandler flow mismatch");
-        _require(handler.streamId() == streamId, "FlowHandler streamId mismatch");
+        _require(handler.streamId() == expected.streamId, "FlowHandler streamId mismatch");
         _require(handler.token() == MainnetKeeperContracts.USDC, "FlowHandler token mismatch");
         _require(handler.streamRecipient() == MainnetKeeperContracts.REWARDS_SWEEPER, "FlowHandler recipient mismatch");
         _require(handler.tokenDecimals() == TOKEN_DECIMALS, "FlowHandler tokenDecimals mismatch");
-        _require(handler.apr() == apr, "FlowHandler apr mismatch");
-        _require(handler.holdingPeriod() == holdingPeriod, "FlowHandler holdingPeriod mismatch");
-        _require(handler.maxRateDelta() == maxRateDelta, "FlowHandler maxRateDelta mismatch");
-        _require(handler.maxRate() == maxRate, "FlowHandler maxRate mismatch");
+        _require(handler.apr() == expected.apr, "FlowHandler apr mismatch");
+        _require(handler.holdingPeriod() == expected.holdingPeriod, "FlowHandler holdingPeriod mismatch");
+        _require(handler.maxRateDelta() == expected.maxRateDelta, "FlowHandler maxRateDelta mismatch");
+        _require(handler.maxRate() == expected.maxRate, "FlowHandler maxRate mismatch");
         _require(handler.borrower() == MainnetKeeperContracts.BORROWER, "FlowHandler borrower mismatch");
         _require(handler.feeWallet() == MainnetKeeperContracts.FEE_WALLET, "FlowHandler feeWallet mismatch");
-        _require(handler.feeFraction() == feeFraction, "FlowHandler feeFraction mismatch");
+        _require(handler.feeFraction() == expected.feeFraction, "FlowHandler feeFraction mismatch");
 
-        _require(flow.getSender(streamId) == safe, "Sablier sender mismatch");
-        _require(address(flow.getToken(streamId)) == MainnetKeeperContracts.USDC, "Sablier token mismatch");
-        _require(flow.getRecipient(streamId) == MainnetKeeperContracts.REWARDS_SWEEPER, "Sablier recipient mismatch");
-        _require(flow.getTokenDecimals(streamId) == TOKEN_DECIMALS, "Sablier tokenDecimals mismatch");
+        _require(flow.getSender(expected.streamId) == expected.safe, "Sablier sender mismatch");
+        _require(address(flow.getToken(expected.streamId)) == MainnetKeeperContracts.USDC, "Sablier token mismatch");
+        _require(
+            flow.getRecipient(expected.streamId) == MainnetKeeperContracts.REWARDS_SWEEPER, "Sablier recipient mismatch"
+        );
+        _require(flow.getTokenDecimals(expected.streamId) == TOKEN_DECIMALS, "Sablier tokenDecimals mismatch");
 
         _require(
-            IAccessControl(flowHandlerProxy).hasRole(DEFAULT_ADMIN_ROLE, flowHandlerAdmin),
+            IAccessControl(flowHandlerProxy).hasRole(DEFAULT_ADMIN_ROLE, expected.flowHandlerAdmin),
             "FlowHandler DEFAULT_ADMIN_ROLE missing"
         );
-        _require(
-            IAccessControl(flowHandlerProxy).hasRole(handler.MANAGER_ROLE(), flowHandlerAdmin),
-            "FlowHandler MANAGER_ROLE missing"
-        );
-        _require(
-            IAccessControl(flowHandlerProxy).hasRole(handler.DISBURSE_OPERATOR_ROLE(), disburseOperator),
-            "FlowHandler DISBURSE_OPERATOR_ROLE missing"
-        );
-        if (decreaseOperator != address(0)) {
+        if (expected.deployed) {
             _require(
-                IAccessControl(flowHandlerProxy).hasRole(handler.DECREASE_OPERATOR_ROLE(), decreaseOperator),
+                IAccessControl(flowHandlerProxy).hasRole(handler.MANAGER_ROLE(), expected.flowHandlerAdmin),
+                "FlowHandler MANAGER_ROLE missing"
+            );
+            _require(
+                IAccessControl(flowHandlerProxy).hasRole(handler.DISBURSE_OPERATOR_ROLE(), expected.disburseOperator),
+                "FlowHandler DISBURSE_OPERATOR_ROLE missing"
+            );
+        }
+        if (expected.decreaseOperator != address(0)) {
+            _require(
+                IAccessControl(flowHandlerProxy).hasRole(handler.DECREASE_OPERATOR_ROLE(), expected.decreaseOperator),
                 "FlowHandler DECREASE_OPERATOR_ROLE missing"
             );
         }
@@ -288,10 +271,12 @@ contract VerifyFlowSetup is FlowDeploymentFiles {
         }
     }
 
-    function _verifySafe(address flowHandlerProxy, address safe, address safeGuard) internal view {
+    function _verifySafe(address flowHandlerProxy, bool deployed, address safe, address safeGuard) internal view {
         console2.log("-- verifying Safe wiring");
 
-        _require(IGnosisSafe(safe).isModuleEnabled(flowHandlerProxy), "FlowHandler module not enabled on Safe");
+        if (deployed) {
+            _require(IGnosisSafe(safe).isModuleEnabled(flowHandlerProxy), "FlowHandler module not enabled on Safe");
+        }
         _require(_readAddressSlot(safe, SAFE_GUARD_SLOT) == safeGuard, "Safe guard slot mismatch");
     }
 
