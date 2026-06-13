@@ -19,6 +19,10 @@ import {MainnetKeeperContracts} from "@script/Contracts.sol";
 import {MainnetStrategyActors} from "@script/Actors.sol";
 import {FlowDeploymentFiles} from "@script/deployment/flow/FlowDeploymentFiles.sol";
 
+interface IOwnable {
+    function owner() external view returns (address);
+}
+
 /// @notice Verifies the final Flow production setup end to end.
 contract VerifyFlowSetup is FlowDeploymentFiles {
     using stdJson for string;
@@ -158,12 +162,20 @@ contract VerifyFlowSetup is FlowDeploymentFiles {
 
         address implementation = _readAddressSlot(proxy, EIP1967_IMPLEMENTATION_SLOT);
         address proxyAdmin = _readAddressSlot(proxy, EIP1967_ADMIN_SLOT);
+        address proxyAdminOwner;
 
         _require(implementation != address(0), "FlowHandler proxy implementation is zero");
-        _require(proxyAdmin == expectedProxyAdmin, "FlowHandler proxy admin mismatch");
+        _require(proxyAdmin != address(0), "FlowHandler proxy admin is zero");
+        try IOwnable(proxyAdmin).owner() returns (address owner_) {
+            proxyAdminOwner = owner_;
+        } catch {
+            revert("FlowHandler proxy admin mismatch");
+        }
+        _require(proxyAdminOwner == expectedProxyAdmin, "FlowHandler proxy admin mismatch");
 
         console2.log("flowHandlerImplementation", implementation);
         console2.log("flowHandlerProxyAdmin", proxyAdmin);
+        console2.log("flowHandlerProxyAdminOwner", proxyAdminOwner);
     }
 
     function _verifyFlowHandler(
