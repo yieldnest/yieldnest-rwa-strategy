@@ -5,6 +5,16 @@ Assumptions:
 - stream `11` is already active
 - `FlowValidator`, `FlowHandler`, and `FlowStrategyKeeper` are already deployed
 
+## Repo setup
+
+Clone the repo and check out this branch before running the scripts:
+
+```bash
+git clone <repo-url>
+cd yieldnest-rwa-strategy
+git checkout feature/sablier-flow-stream
+```
+
 Deployed addresses:
 - Strategy Safe: `0xb34E69c23Df216334496DFFd455618249E6bbFa9`
 - Yn Security Council: `0xfcad670592a3b24869C0b51a6c6FDED4F95D6975`
@@ -14,13 +24,6 @@ Deployed addresses:
 - FlowHandler proxy: `0x8302d2924e3F2d519cA75b9a95fDa0395AEbd2f8`
 - FlowHandler implementation: `0x7195D3fD9Cb2Ac50cD31AA3d56Ef5A43bED086A1`
 - FlowStrategyKeeper: `0x04C00d974cdFA60F16C9615B8C45A85EC680ef76`
-
-## Verification prerequisites
-
-Before running the verifiers, make sure these deployment artifacts exist:
-- `deployments/flow-validator-deployment.json`
-- `deployments/flow-handler-deployment.json`
-- `deployments/flow-keeper-deployment.json`
 
 Run setup verification with:
 ```bash
