@@ -24,6 +24,9 @@ Submit a Safe transaction from the Strategy Safe itself:
 - `function = enableModule(address module)`
 - `module = 0x8302d2924e3F2d519cA75b9a95fDa0395AEbd2f8`
 
+
+https://app.safe.global/transactions/tx?safe=eth:0xb34E69c23Df216334496DFFd455618249E6bbFa9&id=multisig_0xb34E69c23Df216334496DFFd455618249E6bbFa9_0xc041a51e4b3b8f9893f1f167f8cf8999d18e8bf4d4be27bb8c4fb3f88f7e84af
+
 ## 2. Grant the handler role
 
 Submit from the Yn Security Council:
@@ -51,6 +54,14 @@ Manually submit the printed calldata:
 - signing Safe: `0xfcad670592a3b24869C0b51a6c6FDED4F95D6975`
 - `to = 0x81e3E4224D9a2d66D9edbA6d4781d475AA65F01e`
 - `data = printed calldata`
+
+
+TX for steps 2, 3, 4:
+
+
+https://app.safe.global/transactions/tx?safe=eth:0xfcad670592a3b24869C0b51a6c6FDED4F95D6975&id=multisig_0xfcad670592a3b24869C0b51a6c6FDED4F95D6975_0xd54b9e13ef37b5e7cb037e2a4204a5e75419cef40c857d07fb2fa30d35409537
+
+
 
 ## 5. Verify the final setup
 
