@@ -229,7 +229,7 @@ check_proxy_slots() {
   fi
 
   if [[ -n "$expected_admin" ]]; then
-    local expected_admin_code
+    local expected_admin_code actual_admin_owner=""
     expected_admin_code="$(normalize_hex "$(cast code "$expected_admin" --rpc-url "$RPC_URL")")"
 
     # Older deployment artifacts stored the proxy-admin owner EOA instead of the actual proxy-admin contract.
@@ -243,6 +243,15 @@ check_proxy_slots() {
         echo "NOTE FlowHandler deployment artifact recorded proxy admin owner, not proxy admin contract"
       fi
       return "$ok"
+    fi
+
+    if [[ "$(printf '%s' "$admin_addr" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$expected_admin" | tr '[:upper:]' '[:lower:]')" ]]; then
+      actual_admin_owner="$(cast call "$admin_addr" "owner()(address)" --rpc-url "$RPC_URL" 2>/dev/null || true)"
+      if [[ -n "$actual_admin_owner" ]] && [[ "$(printf '%s' "$actual_admin_owner" | tr '[:upper:]' '[:lower:]')" == "$(printf '%s' "$expected_admin" | tr '[:upper:]' '[:lower:]')" ]]; then
+        echo "OK   FlowHandler proxy admin slot: $admin_addr"
+        echo "NOTE FlowHandler deployment artifact recorded proxy admin owner, and the live ProxyAdmin owner matches: $expected_admin"
+        return "$ok"
+      fi
     fi
 
     if [[ "$(printf '%s' "$admin_addr" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$expected_admin" | tr '[:upper:]' '[:lower:]')" ]]; then
