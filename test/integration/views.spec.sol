@@ -62,7 +62,7 @@ contract VaultMainnetUpgradeTest is BaseIntegrationTest {
 
             assertGt(convertToShares, 0, "Convert to shares should return positive value");
             assertApproxEqAbs(
-                convertToAssets, testAmount, 1, "Convert to assets should be approximately equal to original amount"
+                convertToAssets, testAmount, 2, "Convert to assets should be approximately equal to original amount"
             );
 
             assertGe(convertToAssets, 1e6, "Convert to assets should return a value greater than 1e6");

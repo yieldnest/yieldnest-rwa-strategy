@@ -1,47 +1,42 @@
 // SPDX-License-Identifier: BSD-3-Clause
 pragma solidity ^0.8.28;
 
-import {AccessControlEnumerable} from
-    "lib/openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol";
+import {
+    AccessControlEnumerable
+} from "lib/openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol";
 import {ReentrancyGuard} from "lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "lib/openzeppelin-contracts/contracts/utils/Pausable.sol";
 import {Initializable} from "lib/openzeppelin-contracts/contracts/proxy/utils/Initializable.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
+import {IVault} from "lib/yieldnest-flex-strategy/lib/yieldnest-vault/src/interface/IVault.sol";
 
-import {IGnosisSafe} from "src/interfaces/IGnosisSafe.sol";
-import {ISablierLockupLinear} from "src/interfaces/sablier/ISablierLockupLinear.sol";
+import {FlowHandler} from "src/FlowHandler.sol";
 
-/// @title IStrategyKeeper
-/// @notice Interface for the StrategyKeeper contract
-interface IStrategyKeeper {
-    /// @notice Configuration for the keeper
-    struct KeeperConfig {
+/// @title IFlowStrategyKeeper
+/// @notice Interface for the FlowStrategyKeeper contract
+interface IFlowStrategyKeeper {
+    /// @notice Configuration for the flow keeper
+    struct FlowKeeperConfig {
         address vault; // Vault to monitor for excess baseAsset
         address targetStrategy; // FlexStrategy to allocate funds to
-        address safe; // Gnosis Safe holding the funds (keeper must be enabled as module)
+        address safe; // Gnosis Safe holding the funds (for balance checks)
         address baseAsset; // The base asset (e.g., USDC)
-        address borrower; // Address to receive principal
-        address feeWallet; // Address to receive 1/feeFraction of interest
-        address streamReceiver; // Address to receive (feeFraction-1)/feeFraction of interest via stream
-        address sablier; // Sablier LockupLinear contract
+        address flowHandler; // FlowHandler module that handles all Safe operations
         uint256 minThreshold; // Minimum vault balance to trigger allocation
         uint256 minResidual; // Minimum to keep in Safe after disbursement
-        uint256 apr; // APR where 1e18 = 100%
-        uint256 holdingPeriod; // Duration in seconds to hold yield in advance (e.g., 28 days = 2419200)
         uint256 minProcessingPercent; // Min % of vault total for time-based fallback (1e18 = 100%)
-        uint256 feeFraction; // Fee denominator (e.g., 11 means 1/11 to fee wallet, 10/11 to stream)
+        uint256 maxProcessingPercent; // Max disbursable % of vault totalAssets (1e18 = 100%)
     }
 
     error ZeroAddress();
-    error BelowThreshold(uint256 balance, uint256 threshold);
     error InsufficientSafeBalance(uint256 balance, uint256 required);
-    error SafeExecutionFailed();
     error InvalidConfiguration();
     error NoFundsToProcess();
-    error StreamAmountExceedsUint128(uint256 amount);
-    error HoldingPeriodExceedsMaximum(uint256 holdingPeriod, uint256 maximum);
-    error ZeroInterest();
+    error InvalidTargetStrategy(address vault, address targetStrategy);
+    error ProcessingAmountExceedsMaxProcessingPercent(
+        uint256 available, uint256 maxAllowed, uint256 vaultTotalAssets, uint256 maxProcessingPercent
+    );
 
     event KeeperExecuted(
         uint256 indexed timestamp,
@@ -54,19 +49,18 @@ interface IStrategyKeeper {
         uint256 holdingPeriod,
         uint256 principal,
         uint256 fee,
-        uint256 streamAmount,
-        uint256 streamId
+        uint128 newRatePerSecond
     );
-    event ConfigUpdated(
-        address indexed vault, address indexed safe, uint256 apr, uint256 holdingPeriod, uint256 feeFraction
-    );
+    event ConfigUpdated(address indexed vault, address indexed safe);
 }
 
-/// @title StrategyKeeper
-/// @notice Immutable keeper contract that monitors vault balances, allocates to strategy,
-///         and disburses funds from the Safe with yield holdback via Sablier streams.
-/// @dev Deployed directly (no proxy). Must be registered as a module on the Gnosis Safe.
-contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyGuard, Pausable, Initializable {
+/// @title FlowStrategyKeeper
+/// @notice Keeper contract that monitors vault balances, allocates to strategy,
+///         and disburses funds from the Safe with yield holdback via a Sablier Flow stream.
+/// @dev Deployed directly (no proxy). NOT a Safe module — all Safe interactions go through FlowHandler.
+///      Delegates all fund disbursement to FlowHandler.disburse() which handles interest computation,
+///      stream deposit, rate adjustment, and principal/fee transfers.
+contract FlowStrategyKeeper is IFlowStrategyKeeper, AccessControlEnumerable, ReentrancyGuard, Pausable, Initializable {
     /// @notice Role required to call the keeper function (on-chain computed parameters)
     bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
 
@@ -88,48 +82,43 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
     /// @notice Precision for percentage calculations (1e18 = 100%)
     uint256 public constant PRECISION = 1e18;
 
-    /// @notice Seconds per year for APR calculation (365 days)
-    uint256 public constant SECONDS_PER_YEAR = 365 days;
-
     /// @notice Time interval for fallback processing (24 hours)
     uint256 public constant FALLBACK_INTERVAL = 24 hours;
 
-    /// @notice Maximum holding period (1 year in seconds)
-    uint256 public constant MAX_HOLDING_PERIOD = 365 days;
-
     /// @notice Keeper configuration
-    KeeperConfig private _config;
+    FlowKeeperConfig private _config;
 
     /// @notice Timestamp of last processing
     uint256 private _lastProcessedTimestamp;
 
-    /// @notice Creates a new StrategyKeeper
-    /// @param _admin Admin address that receives DEFAULT_ADMIN_ROLE, CONFIG_MANAGER_ROLE, and PAUSER_ROLE
+    /// @notice Creates a new FlowStrategyKeeper
+    /// @param _admin Admin address that receives DEFAULT_ADMIN_ROLE
+    /// @param _configManager Address that receives CONFIG_MANAGER_ROLE
     /// @param _initializer Address that can call initialize() once to set the config
-    /// @param _pauser Additional address that receives PAUSER_ROLE (e.g. YnDev)
-    /// @param _processor Address that receives KEEPER_ROLE and POWER_KEEPER_ROLE
-    constructor(address _admin, address _initializer, address _pauser, address _processor) {
+    /// @param _pauser Address that receives PAUSER_ROLE (e.g. YnDev or emergency operator)
+    /// @param _processor Address that receives POWER_KEEPER_ROLE. KEEPER_ROLE (automated processing)
+    ///        is intentionally not granted here — grant it explicitly when automation is enabled.
+    constructor(address _admin, address _configManager, address _initializer, address _pauser, address _processor) {
         if (_admin == address(0)) revert ZeroAddress();
+        if (_configManager == address(0)) revert ZeroAddress();
         if (_initializer == address(0)) revert ZeroAddress();
         if (_pauser == address(0)) revert ZeroAddress();
         if (_processor == address(0)) revert ZeroAddress();
 
         _grantRole(DEFAULT_ADMIN_ROLE, _admin);
-        _grantRole(CONFIG_MANAGER_ROLE, _admin);
-        _grantRole(PAUSER_ROLE, _admin);
+        _grantRole(CONFIG_MANAGER_ROLE, _configManager);
 
         _grantRole(INITIALIZER_ROLE, _initializer);
 
         _grantRole(PAUSER_ROLE, _pauser);
 
-        _grantRole(KEEPER_ROLE, _processor);
         _grantRole(POWER_KEEPER_ROLE, _processor);
     }
 
     /// @notice Initialize the keeper with configuration
     /// @dev Can only be called once by the INITIALIZER_ROLE holder. The role is revoked after.
     /// @param config_ Initial keeper configuration
-    function initialize(KeeperConfig calldata config_) external onlyRole(INITIALIZER_ROLE) initializer {
+    function initialize(FlowKeeperConfig calldata config_) external onlyRole(INITIALIZER_ROLE) initializer {
         _revokeRole(INITIALIZER_ROLE, msg.sender);
         _setConfig(config_);
     }
@@ -137,11 +126,17 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
     /// @notice Execute the keeper logic to process inflows (on-chain computed parameters)
     /// @dev Requires KEEPER_ROLE. Computes vaultAllocation and available from on-chain state.
     function processInflows() external onlyRole(KEEPER_ROLE) nonReentrant whenNotPaused {
-        KeeperConfig memory cfg = _config;
+        FlowKeeperConfig memory cfg = _config;
 
         // 1. Check if processing should occur and get vault allocation amount
         (bool shouldExecute, uint256 vaultAllocation) = _shouldProcess(cfg);
         if (!shouldExecute) revert NoFundsToProcess();
+
+        // Validate the projected disbursement before moving funds into the Safe.
+        uint256 projectedSafeBalance = IERC20(cfg.baseAsset).balanceOf(cfg.safe) + vaultAllocation;
+        if (projectedSafeBalance <= cfg.minResidual) revert NoFundsToProcess();
+        uint256 projectedAvailable = projectedSafeBalance - cfg.minResidual;
+        _validateProcessingAmount(cfg, projectedAvailable);
 
         // 2. Allocate vault funds if needed (sends funds to safe via strategy)
         if (vaultAllocation > 0) {
@@ -168,7 +163,7 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
     {
         if (available == 0) revert NoFundsToProcess();
 
-        KeeperConfig memory cfg = _config;
+        FlowKeeperConfig memory cfg = _config;
 
         // Allocate vault funds if needed
         if (vaultAllocation > 0) {
@@ -185,34 +180,24 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
     }
 
     /// @notice Common inflow execution logic shared by both processInflows variants
+    /// @dev FlowHandler computes interest and deposits it into the stream in a single call.
+    ///      Fee is computed on top of the interest returned by FlowHandler.
     /// @param cfg Keeper configuration
     /// @param vaultAllocation Amount allocated from vault (for event)
-    /// @param available Amount of safe funds to disburse
+    /// @param available Amount of safe funds to disburse (loanAmount passed to FlowHandler)
     /// @param safeBalance Safe balance after allocation (for event)
-    function _executeInflows(KeeperConfig memory cfg, uint256 vaultAllocation, uint256 available, uint256 safeBalance)
-        internal
-    {
-        // Calculate yield holdback
-        // interest = available * apr * holdingPeriod / SECONDS_PER_YEAR / PRECISION
-        uint256 interest = (available * cfg.apr * cfg.holdingPeriod) / SECONDS_PER_YEAR / PRECISION;
-        if (interest == 0) revert ZeroInterest();
-        uint256 principal = available - interest;
+    function _executeInflows(
+        FlowKeeperConfig memory cfg,
+        uint256 vaultAllocation,
+        uint256 available,
+        uint256 safeBalance
+    ) internal {
+        _validateProcessingAmount(cfg, available);
 
-        // Calculate fee split: 1/feeFraction to fee wallet, (feeFraction-1)/feeFraction to stream
-        uint256 fee = interest / cfg.feeFraction;
-        uint256 streamAmount = interest - fee;
+        FlowHandler flowHandler = FlowHandler(cfg.flowHandler);
 
-        // Execute Safe transactions
-        // Transfer principal to borrower
-        _executeSafeTransfer(cfg, cfg.borrower, principal);
-
-        // Transfer fee to fee wallet (skip if zero to avoid wasteful zero-amount transfer)
-        if (fee > 0) {
-            _executeSafeTransfer(cfg, cfg.feeWallet, fee);
-        }
-
-        // Create Sablier stream for remaining interest
-        uint256 streamId = _createSablierStream(cfg, streamAmount);
+        // Single call: deposits interest to stream, adjusts rate, transfers principal and fee
+        FlowHandler.DisburseResult memory result = flowHandler.disburse(available);
 
         // Record last processed timestamp
         _lastProcessedTimestamp = block.timestamp;
@@ -222,13 +207,12 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
             safeBalance,
             cfg.minResidual,
             available,
-            interest,
-            cfg.apr,
-            cfg.holdingPeriod,
-            principal,
-            fee,
-            streamAmount,
-            streamId
+            uint256(result.interest),
+            flowHandler.apr(),
+            flowHandler.holdingPeriod(),
+            result.principal,
+            result.fee,
+            result.newRate
         );
     }
 
@@ -243,8 +227,7 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
         uint256 holdingPeriod,
         uint256 principal,
         uint256 fee,
-        uint256 streamAmount,
-        uint256 streamId
+        uint128 newRatePerSecond
     ) internal {
         emit KeeperExecuted(
             block.timestamp,
@@ -257,8 +240,7 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
             holdingPeriod,
             principal,
             fee,
-            streamAmount,
-            streamId
+            newRatePerSecond
         );
     }
 
@@ -272,11 +254,10 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
     }
 
     /// @notice Internal check for processing conditions
-    /// @dev Checks if vault needs allocation OR if time-based fallback triggers
     /// @param cfg Keeper configuration
     /// @return shouldExecute True if processing should occur
     /// @return vaultAllocation Amount to allocate from vault (0 if none)
-    function _shouldProcess(KeeperConfig memory cfg)
+    function _shouldProcess(FlowKeeperConfig memory cfg)
         internal
         view
         returns (bool shouldExecute, uint256 vaultAllocation)
@@ -288,7 +269,6 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
         }
 
         // Condition 2: Time-based fallback with percentage check
-        // If 24 hours have passed since the last processing AND the vault balance is at least minProcessingPercent of total assets
         if (block.timestamp >= _lastProcessedTimestamp + FALLBACK_INTERVAL) {
             uint256 vaultTotalAssets = IERC4626(cfg.vault).totalAssets();
             uint256 minAmount = (vaultTotalAssets * cfg.minProcessingPercent) / PRECISION;
@@ -309,7 +289,7 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
     /// @notice Allocate funds from vault to strategy via processor
     /// @param cfg Keeper configuration
     /// @param amount Amount to allocate
-    function _allocateToStrategy(KeeperConfig memory cfg, uint256 amount) internal {
+    function _allocateToStrategy(FlowKeeperConfig memory cfg, uint256 amount) internal {
         // Build processor calls: approve + deposit
         address[] memory targets = new address[](2);
         uint256[] memory values = new uint256[](2);
@@ -329,119 +309,50 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
         IVaultProcessor(cfg.vault).processor(targets, values, data);
     }
 
-    /// @notice Execute a transfer from the Safe
-    /// @param cfg Keeper configuration
-    /// @param to Recipient address
-    /// @param amount Amount to transfer
-    function _executeSafeTransfer(KeeperConfig memory cfg, address to, uint256 amount) internal {
-        bytes memory txData = abi.encodeCall(IERC20.transfer, (to, amount));
-        _executeSafeTransaction(cfg, cfg.baseAsset, 0, txData);
-    }
-
-    /// @notice Create a Sablier stream from the Safe
-    /// @param cfg Keeper configuration
-    /// @param amount Amount to stream
-    /// @return streamId The Sablier stream ID
-    function _createSablierStream(KeeperConfig memory cfg, uint256 amount) internal returns (uint256 streamId) {
-        // Validate amount fits in uint128 (Sablier requirement)
-        if (amount > type(uint128).max) revert StreamAmountExceedsUint128(amount);
-
-        // First approve Sablier to spend the stream amount
-        bytes memory approveData = abi.encodeCall(IERC20.approve, (cfg.sablier, amount));
-        _executeSafeTransaction(cfg, cfg.baseAsset, 0, approveData);
-
-        // Build stream parameters
-        ISablierLockupLinear.CreateWithTimestamps memory params = ISablierLockupLinear.CreateWithTimestamps({
-            sender: cfg.safe,
-            recipient: cfg.streamReceiver,
-            depositAmount: uint128(amount),
-            token: IERC20(cfg.baseAsset),
-            cancelable: true,
-            transferable: true,
-            timestamps: ISablierLockupLinear.Timestamps({
-                start: uint40(block.timestamp),
-                end: uint40(block.timestamp + cfg.holdingPeriod)
-            }),
-            shape: ""
-        });
-
-        ISablierLockupLinear.UnlockAmounts memory unlockAmounts =
-            ISablierLockupLinear.UnlockAmounts({start: 0, cliff: 0});
-
-        // Create stream via Safe and capture the stream ID
-        bytes memory createData =
-            abi.encodeCall(ISablierLockupLinear.createWithTimestampsLL, (params, unlockAmounts, 0));
-        bytes memory returnData = _executeSafeTransactionReturnData(cfg, cfg.sablier, 0, createData);
-        streamId = abi.decode(returnData, (uint256));
-    }
-
-    /// @notice Execute a transaction from the Gnosis Safe as a module
-    /// @dev The keeper must be registered as a module on the Safe
-    /// @param cfg Keeper configuration
-    /// @param to Target address
-    /// @param value ETH value
-    /// @param data Call data
-    function _executeSafeTransaction(KeeperConfig memory cfg, address to, uint256 value, bytes memory data) internal {
-        IGnosisSafe safe = IGnosisSafe(cfg.safe);
-
-        // Execute transaction as module
-        bool success = safe.execTransactionFromModule(to, value, data, IGnosisSafe.Operation.Call);
-
-        if (!success) revert SafeExecutionFailed();
-    }
-
-    /// @notice Execute a transaction from the Gnosis Safe as a module and return data
-    /// @dev The keeper must be registered as a module on the Safe
-    /// @param cfg Keeper configuration
-    /// @param to Target address
-    /// @param value ETH value
-    /// @param data Call data
-    /// @return returnData Data returned from the call
-    function _executeSafeTransactionReturnData(KeeperConfig memory cfg, address to, uint256 value, bytes memory data)
-        internal
-        returns (bytes memory returnData)
-    {
-        IGnosisSafe safe = IGnosisSafe(cfg.safe);
-
-        bool success;
-        (success, returnData) = safe.execTransactionFromModuleReturnData(to, value, data, IGnosisSafe.Operation.Call);
-
-        if (!success) revert SafeExecutionFailed();
-    }
-
     /// @notice Update the keeper configuration
     /// @param config_ New configuration
-    function setConfig(KeeperConfig calldata config_) external onlyRole(CONFIG_MANAGER_ROLE) {
+    function setConfig(FlowKeeperConfig calldata config_) external onlyRole(CONFIG_MANAGER_ROLE) {
         _setConfig(config_);
+    }
+
+    /// @notice Update the max disbursable share of vault totalAssets.
+    /// @dev Value is expressed with 18 decimals where 1e18 = 100%.
+    /// @param maxProcessingPercent_ New max processing percent
+    function setMaxProcessingPercent(uint256 maxProcessingPercent_) external onlyRole(CONFIG_MANAGER_ROLE) {
+        if (maxProcessingPercent_ == 0 || maxProcessingPercent_ > PRECISION) revert InvalidConfiguration();
+        _config.maxProcessingPercent = maxProcessingPercent_;
     }
 
     /// @notice Internal function to set configuration
     /// @param config_ New configuration
-    function _setConfig(KeeperConfig calldata config_) internal {
+    function _setConfig(FlowKeeperConfig calldata config_) internal {
         if (config_.vault == address(0)) revert ZeroAddress();
         if (config_.targetStrategy == address(0)) revert ZeroAddress();
         if (config_.safe == address(0)) revert ZeroAddress();
         if (config_.baseAsset == address(0)) revert ZeroAddress();
-        if (config_.borrower == address(0)) revert ZeroAddress();
-        if (config_.feeWallet == address(0)) revert ZeroAddress();
-        if (config_.streamReceiver == address(0)) revert ZeroAddress();
-        if (config_.sablier == address(0)) revert ZeroAddress();
-        if (config_.apr == 0 || config_.apr > PRECISION) revert InvalidConfiguration();
-        if (config_.holdingPeriod == 0) revert InvalidConfiguration();
-        if (config_.holdingPeriod > MAX_HOLDING_PERIOD) {
-            revert HoldingPeriodExceedsMaximum(config_.holdingPeriod, MAX_HOLDING_PERIOD);
-        }
+        if (config_.flowHandler == address(0)) revert ZeroAddress();
         if (config_.minProcessingPercent > PRECISION) revert InvalidConfiguration();
-        if (config_.feeFraction < 2) revert InvalidConfiguration();
+        if (config_.maxProcessingPercent == 0 || config_.maxProcessingPercent > PRECISION) {
+            revert InvalidConfiguration();
+        }
+        if (!_isAssetListed(config_.vault, config_.targetStrategy)) {
+            revert InvalidTargetStrategy(config_.vault, config_.targetStrategy);
+        }
 
         _config = config_;
-        emit ConfigUpdated(config_.vault, config_.safe, config_.apr, config_.holdingPeriod, config_.feeFraction);
+        emit ConfigUpdated(config_.vault, config_.safe);
     }
 
     /// @notice Get the current configuration
     /// @return config The current keeper configuration
-    function getConfig() external view returns (KeeperConfig memory config) {
+    function getConfig() external view returns (FlowKeeperConfig memory config) {
         return _config;
+    }
+
+    /// @notice Get the max disbursable share of vault totalAssets.
+    /// @return percent Max processing percent (1e18 = 100%)
+    function maxProcessingPercent() external view returns (uint256 percent) {
+        return _config.maxProcessingPercent;
     }
 
     /// @notice Pause the keeper
@@ -454,6 +365,28 @@ contract StrategyKeeper is IStrategyKeeper, AccessControlEnumerable, ReentrancyG
     /// @dev Only callable by PAUSER_ROLE
     function unpause() external onlyRole(PAUSER_ROLE) {
         _unpause();
+    }
+
+    function _validateProcessingAmount(FlowKeeperConfig memory cfg, uint256 available) internal view {
+        uint256 vaultTotalAssets = IERC4626(cfg.vault).totalAssets();
+        uint256 maxAllowed = (vaultTotalAssets * cfg.maxProcessingPercent) / PRECISION;
+
+        if (available > maxAllowed) {
+            revert ProcessingAmountExceedsMaxProcessingPercent(
+                available, maxAllowed, vaultTotalAssets, cfg.maxProcessingPercent
+            );
+        }
+    }
+
+    function _isAssetListed(address vault_, address asset_) internal view returns (bool) {
+        address[] memory assets = IVault(vault_).getAssets();
+        uint256 length = assets.length;
+        for (uint256 i = 0; i < length; i++) {
+            if (assets[i] == asset_) {
+                return true;
+            }
+        }
+        return false;
     }
 }
 

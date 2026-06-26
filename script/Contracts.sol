@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 /// @title MainnetKeeperContracts
-/// @notice Mainnet contract addresses for StrategyKeeper deployment
+/// @notice Mainnet contract addresses for the flow-based keeper deployment
 library MainnetKeeperContracts {
     // ═══════════════════════════════════════════════════════════════════════════
     // TOKENS
@@ -39,6 +39,12 @@ library MainnetKeeperContracts {
 
     /// @notice Sablier BatchLockup contract for batch stream creation
     address public constant SABLIER_BATCH_LOCKUP = 0x0636D83B184D65C242c43de6AAd10535BFb9D45a;
+
+    /// @notice Sablier Flow contract for continuous streaming payments
+    address public constant SABLIER_FLOW = 0x844344Cd871B28221d725ecE9630E8bDE4E3a181;
+
+    /// @notice Default production Sablier Flow stream id for ynRWAx
+    uint256 public constant DEFAULT_FLOW_STREAM_ID = 11;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // GNOSIS SAFE INFRASTRUCTURE

@@ -36,7 +36,7 @@ library SablierRules {
     /// @param sablierContract The address of the Sablier LockupLinear contract
     /// @param validator The validator contract to use for additional validation
     /// @return RuleParams for createWithTimestampsLL function
-    /// @dev Use this with StrategyKeeperSablierValidator for enhanced security:
+    /// @dev Pair with a validator when additional stream-level checks are required:
     ///      - validates sender is the configured safe
     ///      - validates recipient is in the allowed list
     ///      - validates token is the configured token
